@@ -132,10 +132,17 @@ IMAGE=$(find_latest_image "${GPU_ARCH}")
 echo "Pulling Docker image: ${IMAGE}"
 docker pull "${IMAGE}"
 
+HF_CACHE_HOST=/home/runner/sgl-data/hf-cache
+if [[ -d "$HF_CACHE_HOST" ]]; then
+    CACHE_VOLUME="-v $HF_CACHE_HOST:/hf_home"
+else
+    CACHE_VOLUME=""
+fi
+
 echo "Launching container: ci_sglang"
 docker run -dt --user root --device=/dev/kfd ${DEVICE_FLAG} \
   -v "${GITHUB_WORKSPACE:-$PWD}:/sglang-checkout" \
-  -v /home/runner/sgl-data/hf-cache:/hf_home \
+  $CACHE_VOLUME \
   --ipc=host --group-add video \
   --shm-size 32g \
   --cap-add=SYS_PTRACE \
