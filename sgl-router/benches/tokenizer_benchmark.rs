@@ -3,7 +3,12 @@
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
 use sglang_router_rs::tokenizer::{
-    huggingface::HuggingFaceTokenizer, sequence::Sequence, stop::*, stream::DecodeStream, traits::*,
+    cache::{CacheConfig, CachedTokenizer},
+    huggingface::HuggingFaceTokenizer,
+    sequence::Sequence,
+    stop::*,
+    stream::DecodeStream,
+    traits::*,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -1248,6 +1253,148 @@ fn bench_scaling_characteristics(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_cached_vs_uncached(c: &mut Criterion) {
+    let tokenizer_path = get_tokenizer_path();
+    let tokenizer = Arc::new(
+        HuggingFaceTokenizer::from_file(tokenizer_path.to_str().unwrap())
+            .expect("Failed to load tokenizer"),
+    );
+
+    // Create cached tokenizer
+    let cached_tokenizer = Arc::new(CachedTokenizer::new(
+        tokenizer.clone(),
+        CacheConfig::default(),
+    ));
+
+    // Pre-generate prompts
+    let system_4k = generate_system_prompt(4000);
+
+    let test_cases = vec![
+        ("short_30B", SHORT_PROMPT),
+        ("medium_230B", MEDIUM_PROMPT),
+        ("long_670B", LONG_PROMPT),
+        ("system_4KB", system_4k.as_str()),
+    ];
+
+    let mut group = c.benchmark_group("cache_comparison");
+
+    for (name, prompt) in test_cases {
+        let prompt_len = prompt.len();
+
+        // Benchmark uncached
+        let printed_uncached = Arc::new(AtomicBool::new(false));
+        group.bench_function(format!("{}_uncached", name), |b| {
+            let printed = printed_uncached.clone();
+            let tokenizer = tokenizer.clone();
+
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(tokenizer.encode(prompt).unwrap());
+                }
+                let duration = start.elapsed();
+
+                if !printed.load(Ordering::Relaxed) {
+                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
+                    let time_per_op = duration.as_micros() as f64 / iters as f64;
+
+                    let result = format!(
+                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12}",
+                        format!("{}_uncached", name),
+                        prompt_len,
+                        ops_per_sec,
+                        time_per_op,
+                        "baseline"
+                    );
+                    add_result("cache", result);
+
+                    printed.store(true, Ordering::Relaxed);
+                }
+
+                duration
+            });
+        });
+
+        // Benchmark cached (first call - miss)
+        let printed_miss = Arc::new(AtomicBool::new(false));
+        group.bench_function(format!("{}_cache_miss", name), |b| {
+            let printed = printed_miss.clone();
+
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    // Create fresh cached tokenizer for each iteration to ensure miss
+                    let fresh_cached =
+                        CachedTokenizer::new(tokenizer.clone(), CacheConfig::default());
+                    black_box(fresh_cached.encode(prompt).unwrap());
+                }
+                let duration = start.elapsed();
+
+                if !printed.load(Ordering::Relaxed) {
+                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
+                    let time_per_op = duration.as_micros() as f64 / iters as f64;
+
+                    let result = format!(
+                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12}",
+                        format!("{}_cache_miss", name),
+                        prompt_len,
+                        ops_per_sec,
+                        time_per_op,
+                        "miss"
+                    );
+                    add_result("cache", result);
+
+                    printed.store(true, Ordering::Relaxed);
+                }
+
+                duration
+            });
+        });
+
+        // Benchmark cached (subsequent calls - hit)
+        let cached_clone = cached_tokenizer.clone();
+        cached_clone.encode(prompt).unwrap(); // Prime the cache
+
+        let printed_hit = Arc::new(AtomicBool::new(false));
+        group.bench_function(format!("{}_cache_hit", name), |b| {
+            let printed = printed_hit.clone();
+            let cached = cached_clone.clone();
+
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(cached.encode(prompt).unwrap());
+                }
+                let duration = start.elapsed();
+
+                if !printed.load(Ordering::Relaxed) {
+                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
+                    let time_per_op = duration.as_micros() as f64 / iters as f64;
+
+                    // Get cache stats
+                    let stats = cached.cache_stats().unwrap();
+
+                    let result = format!(
+                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12.1}%",
+                        format!("{}_cache_hit", name),
+                        prompt_len,
+                        ops_per_sec,
+                        time_per_op,
+                        stats.hit_rate * 100.0
+                    );
+                    add_result("cache", result);
+
+                    printed.store(true, Ordering::Relaxed);
+                }
+
+                duration
+            });
+        });
+    }
+
+    group.finish();
+}
+
 // Print final summary table
 fn print_summary() {
     println!("\n{}", "=".repeat(120));
@@ -1367,6 +1514,13 @@ fn print_summary() {
                         "Operation", "Calls/sec", "Time/call", "Improvement"
                     );
                 }
+                "cache" => {
+                    println!("CACHE PERFORMANCE (L0 WHOLE-STRING)");
+                    println!(
+                        "{:<20} | {:>8} | {:>12} | {:>12} | {:>12}",
+                        "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Status"
+                    );
+                }
                 _ => {}
             }
             println!("{}", "-".repeat(120));
@@ -1391,6 +1545,7 @@ fn run_benchmarks(c: &mut Criterion) {
     bench_latency_distribution(c);
     bench_scaling_characteristics(c);
     bench_memory_efficiency(c);
+    bench_cached_vs_uncached(c);
 
     // Print summary at the end
     print_summary();
