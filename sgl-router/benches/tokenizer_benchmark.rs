@@ -17,16 +17,24 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-// Include the common test utilities
-#[path = "../tests/common/mod.rs"]
-mod common;
-use common::ensure_tokenizer_cached;
-
 // Cache the tokenizer path for the entire benchmark run
 static TOKENIZER_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn get_tokenizer_path() -> &'static PathBuf {
-    TOKENIZER_PATH.get_or_init(ensure_tokenizer_cached)
+    TOKENIZER_PATH.get_or_init(|| {
+        // Use DeepSeek-R1 which has chat template support
+        // Create a synchronous runtime to download the tokenizer
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        let tokenizer_dir = rt.block_on(async {
+            sglang_router_rs::tokenizer::hub::download_tokenizer_from_hf("deepseek-ai/DeepSeek-R1")
+                .await
+                .expect("Failed to download DeepSeek-R1 tokenizer from HuggingFace")
+        });
+
+        // The download_tokenizer_from_hf returns the directory containing tokenizer.json
+        // We need to construct the full path to tokenizer.json
+        tokenizer_dir.join("tokenizer.json")
+    })
 }
 
 // Production target: 100k tokens per second
@@ -1395,6 +1403,279 @@ fn bench_cached_vs_uncached(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_l1_cache_chat_template(c: &mut Criterion) {
+    let tokenizer_path = get_tokenizer_path();
+    let tokenizer = Arc::new(
+        HuggingFaceTokenizer::from_file(tokenizer_path.to_str().unwrap())
+            .expect("Failed to load tokenizer"),
+    );
+
+    // Simulate chat template with long system prompt
+    let system_prompt = "You are a helpful AI assistant with expertise in multiple domains. \
+        Your responses should be accurate, concise, and well-structured. \
+        Always cite sources when making factual claims. \
+        Be respectful and maintain a professional tone. \
+        If you don't know something, admit it rather than making up information. "
+        .repeat(5);
+
+    // Different user queries (only this part changes)
+    let user_queries = [
+        "What is the capital of France?",
+        "Explain quantum computing.",
+        "How do I learn Python?",
+        "What are the health benefits of exercise?",
+        "Describe the water cycle.",
+    ];
+
+    // Create full prompts (simulating chat template)
+    let prompts: Vec<String> = user_queries
+        .iter()
+        .map(|query| format!("{}\n\nUser: {}\nAssistant:", system_prompt, query))
+        .collect();
+
+    let mut group = c.benchmark_group("l1_cache_chat");
+
+    // Test 0: No cache (raw tokenizer baseline)
+    let printed_uncached = Arc::new(AtomicBool::new(false));
+    group.bench_function("uncached_varied_prompts", |b| {
+        let printed = printed_uncached.clone();
+        let tokenizer = tokenizer.clone();
+        let test_prompts = prompts.clone();
+
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                // Encode all different prompts without any cache
+                for prompt in &test_prompts {
+                    black_box(tokenizer.encode(prompt).unwrap());
+                }
+            }
+            let duration = start.elapsed();
+
+            if !printed.load(Ordering::Relaxed) {
+                let total_ops = iters * test_prompts.len() as u64;
+                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
+                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
+
+                let result = format!(
+                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | {:>20}",
+                    "Uncached (baseline)",
+                    test_prompts[0].len(),
+                    ops_per_sec,
+                    time_per_op,
+                    "N/A"
+                );
+                add_result("l1_cache", result);
+
+                printed.store(true, Ordering::Relaxed);
+            }
+
+            duration
+        });
+    });
+
+    // Test 1: L0-only cache (baseline)
+    let l0_only_config = CacheConfig {
+        enable_l0: true,
+        l0_max_entries: 10_000,
+        enable_l1: false,
+        l1_max_memory: 0,
+        l1_granularity: 128,
+    };
+    let cached_l0_only = Arc::new(CachedTokenizer::new(tokenizer.clone(), l0_only_config));
+
+    let printed_l0 = Arc::new(AtomicBool::new(false));
+    group.bench_function("l0_only_varied_prompts", |b| {
+        let printed = printed_l0.clone();
+        let cached = cached_l0_only.clone();
+        let test_prompts = prompts.clone();
+
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                // Encode all different prompts (simulating different requests)
+                for prompt in &test_prompts {
+                    black_box(cached.encode(prompt).unwrap());
+                }
+            }
+            let duration = start.elapsed();
+
+            if !printed.load(Ordering::Relaxed) {
+                let total_ops = iters * test_prompts.len() as u64;
+                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
+                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
+
+                let stats = cached.cache_stats().unwrap();
+
+                let result = format!(
+                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | L0:{:>6.1}% L1:{:>6}",
+                    "L0-only (varied)",
+                    test_prompts[0].len(),
+                    ops_per_sec,
+                    time_per_op,
+                    stats.hit_rate * 100.0,
+                    "N/A"
+                );
+                add_result("l1_cache", result);
+
+                printed.store(true, Ordering::Relaxed);
+            }
+
+            duration
+        });
+    });
+
+    // Test 2: L0+L1 cache (should benefit from shared prefix)
+    let l0_l1_config = CacheConfig {
+        enable_l0: true,
+        l0_max_entries: 10_000,
+        enable_l1: true,
+        l1_max_memory: 50 * 1024 * 1024,
+        l1_granularity: 128,
+    };
+    let cached_l0_l1 = Arc::new(CachedTokenizer::new(
+        tokenizer.clone(),
+        l0_l1_config.clone(),
+    ));
+
+    let printed_l1 = Arc::new(AtomicBool::new(false));
+    group.bench_function("l0_l1_varied_prompts", |b| {
+        let printed = printed_l1.clone();
+        let cached = cached_l0_l1.clone();
+        let test_prompts = prompts.clone();
+
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                // Encode all different prompts (simulating different requests)
+                for prompt in &test_prompts {
+                    black_box(cached.encode(prompt).unwrap());
+                }
+            }
+            let duration = start.elapsed();
+
+            if !printed.load(Ordering::Relaxed) {
+                let total_ops = iters * test_prompts.len() as u64;
+                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
+                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
+
+                let stats = cached.cache_stats().unwrap();
+                let l1_stats = cached.l1_cache_stats().unwrap();
+
+                let result = format!(
+                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | L0:{:>6.1}% L1:{:>6.1}%",
+                    "L0+L1 (varied)",
+                    test_prompts[0].len(),
+                    ops_per_sec,
+                    time_per_op,
+                    stats.hit_rate * 100.0,
+                    l1_stats.hit_rate * 100.0
+                );
+                add_result("l1_cache", result);
+
+                printed.store(true, Ordering::Relaxed);
+            }
+
+            duration
+        });
+    });
+
+    // Test 3: First request cold start (L0+L1)
+    let printed_cold = Arc::new(AtomicBool::new(false));
+    group.bench_function("l0_l1_cold_start", |b| {
+        let printed = printed_cold.clone();
+        let tokenizer = tokenizer.clone();
+        let first_prompt = &prompts[0];
+
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                // Create fresh cache for each iteration (cold start)
+                let fresh_cached = CachedTokenizer::new(
+                    tokenizer.clone(),
+                    CacheConfig {
+                        enable_l0: true,
+                        l0_max_entries: 10_000,
+                        enable_l1: true,
+                        l1_max_memory: 50 * 1024 * 1024,
+                        l1_granularity: 128,
+                    },
+                );
+                black_box(fresh_cached.encode(first_prompt).unwrap());
+            }
+            let duration = start.elapsed();
+
+            if !printed.load(Ordering::Relaxed) {
+                let ops_per_sec = iters as f64 / duration.as_secs_f64();
+                let time_per_op = duration.as_micros() as f64 / iters as f64;
+
+                let result = format!(
+                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | {:>14}",
+                    "L0+L1 (cold start)",
+                    first_prompt.len(),
+                    ops_per_sec,
+                    time_per_op,
+                    "N/A"
+                );
+                add_result("l1_cache", result);
+
+                printed.store(true, Ordering::Relaxed);
+            }
+
+            duration
+        });
+    });
+
+    // Test 4: Measure prefix reuse benefit
+    // First, prime the cache with the first prompt
+    let cached_primed = Arc::new(CachedTokenizer::new(tokenizer.clone(), l0_l1_config));
+    cached_primed.encode(&prompts[0]).unwrap(); // Prime both L0 and L1
+
+    let printed_reuse = Arc::new(AtomicBool::new(false));
+    group.bench_function("l0_l1_prefix_reuse", |b| {
+        let printed = printed_reuse.clone();
+        let cached = cached_primed.clone();
+        let test_prompts = &prompts[1..]; // Different queries, same prefix
+
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                // Encode prompts with same prefix but different suffixes
+                for prompt in test_prompts {
+                    black_box(cached.encode(prompt).unwrap());
+                }
+            }
+            let duration = start.elapsed();
+
+            if !printed.load(Ordering::Relaxed) {
+                let total_ops = iters * test_prompts.len() as u64;
+                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
+                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
+
+                let stats = cached.cache_stats().unwrap();
+                let l1_stats = cached.l1_cache_stats().unwrap();
+
+                let result = format!(
+                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | L0:{:>6.1}% L1:{:>6.1}%",
+                    "L0+L1 (prefix reuse)",
+                    test_prompts[0].len(),
+                    ops_per_sec,
+                    time_per_op,
+                    stats.hit_rate * 100.0,
+                    l1_stats.hit_rate * 100.0
+                );
+                add_result("l1_cache", result);
+
+                printed.store(true, Ordering::Relaxed);
+            }
+
+            duration
+        });
+    });
+
+    group.finish();
+}
+
 // Print final summary table
 fn print_summary() {
     println!("\n{}", "=".repeat(120));
@@ -1521,6 +1802,13 @@ fn print_summary() {
                         "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Status"
                     );
                 }
+                "l1_cache" => {
+                    println!("L1 CACHE (PREFIX MATCHING) - CHAT TEMPLATE");
+                    println!(
+                        "{:<25} | {:>8} | {:>12} | {:>12} | {:>20}",
+                        "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Hit Rates"
+                    );
+                }
                 _ => {}
             }
             println!("{}", "-".repeat(120));
@@ -1546,6 +1834,7 @@ fn run_benchmarks(c: &mut Criterion) {
     bench_scaling_characteristics(c);
     bench_memory_efficiency(c);
     bench_cached_vs_uncached(c);
+    bench_l1_cache_chat_template(c);
 
     // Print summary at the end
     print_summary();

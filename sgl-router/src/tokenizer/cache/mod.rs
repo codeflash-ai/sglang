@@ -16,9 +16,11 @@
 
 mod fingerprint;
 mod l0;
+mod l1;
 
 pub use fingerprint::TokenizerFingerprint;
 pub use l0::{CacheStats, L0Cache};
+pub use l1::{L1Cache, L1CacheStats};
 
 use super::traits::{Decoder, Encoder, Encoding, SpecialTokens, TokenIdType, Tokenizer};
 use anyhow::Result;
@@ -31,6 +33,12 @@ pub struct CacheConfig {
     pub enable_l0: bool,
     /// Maximum number of entries in L0 cache
     pub l0_max_entries: usize,
+    /// Enable L1 (prefix) cache
+    pub enable_l1: bool,
+    /// Maximum memory for L1 cache in bytes
+    pub l1_max_memory: usize,
+    /// L1 granularity in bytes (e.g., 128)
+    pub l1_granularity: usize,
 }
 
 impl Default for CacheConfig {
@@ -38,6 +46,9 @@ impl Default for CacheConfig {
         Self {
             enable_l0: true,
             l0_max_entries: 10_000, // ~22MB memory for typical prompts
+            enable_l1: false,       // Opt-in for now
+            l1_max_memory: 50 * 1024 * 1024, // 50MB
+            l1_granularity: 128,    // 128 bytes
         }
     }
 }
@@ -48,6 +59,8 @@ pub struct CachedTokenizer {
     inner: Arc<dyn Tokenizer>,
     /// L0 cache (whole-string exact match)
     l0: Option<L0Cache>,
+    /// L1 cache (prefix matching at fixed boundaries)
+    l1: Option<L1Cache>,
     /// Configuration
     #[allow(dead_code)]
     config: CacheConfig,
@@ -66,23 +79,38 @@ impl CachedTokenizer {
             None
         };
 
+        let l1 = if config.enable_l1 {
+            Some(L1Cache::new(config.l1_max_memory, config.l1_granularity))
+        } else {
+            None
+        };
+
         Self {
             inner,
             l0,
+            l1,
             config,
             fingerprint,
         }
     }
 
-    /// Get cache statistics
+    /// Get L0 cache statistics
     pub fn cache_stats(&self) -> Option<CacheStats> {
         self.l0.as_ref().map(|cache| cache.stats())
+    }
+
+    /// Get L1 cache statistics
+    pub fn l1_cache_stats(&self) -> Option<L1CacheStats> {
+        self.l1.as_ref().map(|cache| cache.stats())
     }
 
     /// Clear the cache
     pub fn clear_cache(&self) {
         if let Some(l0) = &self.l0 {
             l0.clear();
+        }
+        if let Some(l1) = &self.l1 {
+            l1.clear();
         }
     }
 
@@ -94,19 +122,49 @@ impl CachedTokenizer {
 
 impl Encoder for CachedTokenizer {
     fn encode(&self, input: &str) -> Result<Encoding> {
-        // L0 cache lookup
+        // L0 cache lookup (exact match)
         if let Some(l0) = &self.l0 {
             if let Some(cached) = l0.get(input) {
                 return Ok(cached);
             }
         }
 
-        // Cache miss - tokenize and cache result
+        // L1 cache lookup (prefix match)
+        if let Some(l1) = &self.l1 {
+            if let Some((prefix_tokens, prefix_len)) = l1.longest_prefix_match(input) {
+                // We have a prefix match - tokenize the suffix
+                let suffix = &input[prefix_len..];
+                if !suffix.is_empty() {
+                    let suffix_encoding = self.inner.encode(suffix)?;
+
+                    // Merge prefix tokens + suffix tokens
+                    // Note: This is an approximation - boundary tokens may differ
+                    let mut merged_tokens = prefix_tokens;
+                    merged_tokens.extend_from_slice(suffix_encoding.token_ids());
+
+                    let merged_encoding = Encoding::Sp(merged_tokens);
+
+                    // Cache the full result in L0
+                    if let Some(l0) = &self.l0 {
+                        l0.insert(input.to_string(), merged_encoding.clone());
+                    }
+
+                    return Ok(merged_encoding);
+                }
+            }
+        }
+
+        // Full tokenization (both L0 and L1 miss)
         let encoding = self.inner.encode(input)?;
 
-        // Cache the result
+        // Cache in L0
         if let Some(l0) = &self.l0 {
             l0.insert(input.to_string(), encoding.clone());
+        }
+
+        // Cache in L1 at boundaries
+        if let Some(l1) = &self.l1 {
+            l1.insert_at_boundaries(input, encoding.token_ids());
         }
 
         Ok(encoding)
@@ -180,6 +238,9 @@ mod tests {
         let config = CacheConfig {
             enable_l0: false,
             l0_max_entries: 0,
+            enable_l1: false,
+            l1_max_memory: 0,
+            l1_granularity: 128,
         };
         let cached = CachedTokenizer::new(tokenizer, config);
 
