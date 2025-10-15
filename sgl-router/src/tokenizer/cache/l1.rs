@@ -32,6 +32,10 @@ const NUM_SHARDS: usize = 16;
 struct CachedPrefix {
     /// The token IDs for this prefix
     tokens: Vec<TokenIdType>,
+    /// Last access timestamp (for LRU eviction)
+    last_accessed: Arc<AtomicU64>,
+    /// Size in bytes (for memory tracking during eviction)
+    size_bytes: usize,
 }
 
 /// L1 cache implementation with fixed-boundary prefix matching
@@ -50,6 +54,8 @@ pub struct L1Cache {
     hits: AtomicU64,
     /// Cache miss counter
     misses: AtomicU64,
+    /// Monotonic counter for LRU timestamps
+    access_counter: AtomicU64,
 }
 
 impl L1Cache {
@@ -64,6 +70,7 @@ impl L1Cache {
             current_memory: AtomicU64::new(0),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
+            access_counter: AtomicU64::new(0),
         }
     }
 
@@ -92,6 +99,10 @@ impl L1Cache {
             let shard_idx = hash_bytes[0] as usize % NUM_SHARDS;
 
             if let Some(entry) = self.shards[shard_idx].get(&hash_bytes) {
+                // Update last accessed timestamp for LRU
+                let timestamp = self.access_counter.fetch_add(1, Ordering::Relaxed);
+                entry.last_accessed.store(timestamp, Ordering::Relaxed);
+
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 return Some((entry.tokens.clone(), k));
             }
@@ -105,33 +116,80 @@ impl L1Cache {
     pub fn insert_at_boundaries(&self, input: &str, tokens: &[TokenIdType]) {
         let bytes = input.as_bytes();
 
-        // Don't cache if we're over memory limit
-        if self.current_memory.load(Ordering::Relaxed) as usize >= self.max_memory {
-            return;
-        }
-
-        // Insert at each boundary
+        // Calculate how much memory we need
+        let mut entries_to_insert = Vec::new();
         for k in (self.granularity..bytes.len()).step_by(self.granularity) {
             let prefix = &bytes[0..k];
             let hash = blake3::hash(prefix);
             let hash_bytes: Blake3Hash = *hash.as_bytes();
 
-            let shard_idx = hash_bytes[0] as usize % NUM_SHARDS;
-
-            // For this prefix, we need to know how many tokens it represents
-            // We'll use a simple heuristic: assume uniform token distribution
             let token_ratio = tokens.len() as f64 / bytes.len() as f64;
             let estimated_tokens = (k as f64 * token_ratio) as usize;
             let prefix_tokens = tokens[..estimated_tokens.min(tokens.len())].to_vec();
-
             let size_bytes = k + prefix_tokens.len() * size_of::<TokenIdType>();
+
+            entries_to_insert.push((hash_bytes, prefix_tokens, size_bytes));
+        }
+
+        if entries_to_insert.is_empty() {
+            return;
+        }
+
+        let total_size_needed: usize = entries_to_insert.iter().map(|(_, _, size)| size).sum();
+
+        // Evict if necessary
+        let current = self.current_memory.load(Ordering::Relaxed) as usize;
+        if current + total_size_needed > self.max_memory {
+            self.evict_lru(total_size_needed);
+        }
+
+        // Insert all entries
+        for (hash_bytes, prefix_tokens, size_bytes) in entries_to_insert {
+            let shard_idx = hash_bytes[0] as usize % NUM_SHARDS;
+
             let cached = CachedPrefix {
                 tokens: prefix_tokens,
+                last_accessed: Arc::new(AtomicU64::new(
+                    self.access_counter.load(Ordering::Relaxed),
+                )),
+                size_bytes,
             };
 
             self.shards[shard_idx].insert(hash_bytes, cached);
             self.current_memory
                 .fetch_add(size_bytes as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Evict least recently used entries to free up the requested space
+    fn evict_lru(&self, space_needed: usize) {
+        // Collect all entries with their timestamps across all shards
+        let mut entries: Vec<(usize, Blake3Hash, u64, usize)> = Vec::new();
+
+        for (shard_idx, shard) in self.shards.iter().enumerate() {
+            for entry in shard.iter() {
+                let hash = *entry.key();
+                let timestamp = entry.value().last_accessed.load(Ordering::Relaxed);
+                let size = entry.value().size_bytes;
+                entries.push((shard_idx, hash, timestamp, size));
+            }
+        }
+
+        // Sort by timestamp (oldest first)
+        entries.sort_by_key(|(_, _, timestamp, _)| *timestamp);
+
+        // Evict entries until we have enough space
+        let mut freed = 0usize;
+        for (shard_idx, hash, _, _) in entries {
+            if freed >= space_needed {
+                break;
+            }
+
+            if let Some((_, removed)) = self.shards[shard_idx].remove(&hash) {
+                freed += removed.size_bytes;
+                self.current_memory
+                    .fetch_sub(removed.size_bytes as u64, Ordering::Relaxed);
+            }
         }
     }
 
@@ -283,5 +341,42 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.hits, 0);
         assert_eq!(stats.misses, 0);
+    }
+
+    #[test]
+    fn test_lru_eviction() {
+        // Create a small cache (5KB) to trigger eviction
+        let cache = L1Cache::new(5 * 1024, 128);
+
+        // Insert first set of entries
+        let input1 = "a".repeat(300); // Will create 2 entries at 128 and 256
+        let tokens1 = vec![1; 100];
+        cache.insert_at_boundaries(&input1, &tokens1);
+
+        // Access the first entry to update its timestamp
+        let result = cache.longest_prefix_match(&"a".repeat(300));
+        assert!(result.is_some());
+
+        // Insert second set of entries (different prefix)
+        let input2 = "b".repeat(300);
+        let tokens2 = vec![2; 100];
+        cache.insert_at_boundaries(&input2, &tokens2);
+
+        // Access the second entry to make it more recent
+        let result = cache.longest_prefix_match(&"b".repeat(300));
+        assert!(result.is_some());
+
+        // Insert third set of entries (should trigger eviction of oldest)
+        let input3 = "c".repeat(500); // Will create entries at 128, 256, 384
+        let tokens3 = vec![3; 150];
+        cache.insert_at_boundaries(&input3, &tokens3);
+
+        // Verify cache didn't exceed max memory
+        let stats = cache.stats();
+        assert!(stats.memory_bytes <= 5 * 1024);
+
+        // The most recently accessed entries should still be present
+        let result = cache.longest_prefix_match(&"c".repeat(300));
+        assert!(result.is_some());
     }
 }
