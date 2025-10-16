@@ -92,7 +92,6 @@ class RouterArgs:
     tokenizer_cache_l0_max_entries: int = 10000
     tokenizer_cache_enable_l1: bool = False
     tokenizer_cache_l1_max_memory: int = 50 * 1024 * 1024  # 50MB
-    tokenizer_cache_l1_granularity: int = 128
     reasoning_parser: Optional[str] = None
     tool_call_parser: Optional[str] = None
     # Backend selection
