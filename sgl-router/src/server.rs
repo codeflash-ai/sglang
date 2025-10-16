@@ -25,7 +25,11 @@ use crate::{
     reasoning_parser::ParserFactory as ReasoningParserFactory,
     routers::{router_manager::RouterManager, RouterTrait},
     service_discovery::{start_service_discovery, ServiceDiscoveryConfig},
-    tokenizer::{factory as tokenizer_factory, traits::Tokenizer},
+    tokenizer::{
+        cache::{CacheConfig, CachedTokenizer},
+        factory as tokenizer_factory,
+        traits::Tokenizer,
+    },
     tool_parser::ParserFactory as ToolParserFactory,
 };
 use axum::{
@@ -859,7 +863,7 @@ pub async fn startup(config: ServerConfig) -> Result<(), Box<dyn std::error::Err
                     .to_string()
             })?;
 
-        let tokenizer = Some(
+        let base_tokenizer =
                 tokenizer_factory::create_tokenizer_with_chat_template_blocking(
                     &tokenizer_path,
                     config.router_config.chat_template.as_deref(),
@@ -871,8 +875,24 @@ pub async fn startup(config: ServerConfig) -> Result<(), Box<dyn std::error::Err
                         or a HuggingFace model ID. For directories, ensure they contain tokenizer files.",
                         tokenizer_path, e
                     )
-                })?,
-            );
+                })?;
+
+        // Conditionally wrap with caching layer if at least one cache is enabled
+        let tokenizer = if config.router_config.tokenizer_cache.enable_l0
+            || config.router_config.tokenizer_cache.enable_l1
+        {
+            let cache_config = CacheConfig {
+                enable_l0: config.router_config.tokenizer_cache.enable_l0,
+                l0_max_entries: config.router_config.tokenizer_cache.l0_max_entries,
+                enable_l1: config.router_config.tokenizer_cache.enable_l1,
+                l1_max_memory: config.router_config.tokenizer_cache.l1_max_memory,
+                l1_granularity: config.router_config.tokenizer_cache.l1_granularity,
+            };
+            Some(Arc::new(CachedTokenizer::new(base_tokenizer, cache_config)) as Arc<dyn Tokenizer>)
+        } else {
+            // Use base tokenizer directly without caching
+            Some(base_tokenizer)
+        };
         let reasoning_parser_factory = Some(ReasoningParserFactory::new());
         let tool_parser_factory = Some(ToolParserFactory::new());
 

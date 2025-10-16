@@ -1740,8 +1740,8 @@ fn bench_l1_cache_production_scale(c: &mut Criterion) {
 
     // Simulate 3 common system prompt sizes (matching production patterns)
     let system_prompt_10k = generate_system_prompt(40000); // ~10k tokens
-    let system_prompt_5k = generate_system_prompt(20000);  // ~5k tokens
-    let system_prompt_2k = generate_system_prompt(8000);   // ~2k tokens
+    let system_prompt_5k = generate_system_prompt(20000); // ~5k tokens
+    let system_prompt_2k = generate_system_prompt(8000); // ~2k tokens
 
     let system_prompts = vec![
         ("10k_system", system_prompt_10k.as_str(), 40000), // Large system prompt
@@ -1757,40 +1757,54 @@ fn bench_l1_cache_production_scale(c: &mut Criterion) {
         for i in 0..100 {
             // Each user query is unique (matching total 20k tokens)
             let user_query_size = 40000; // Adjust to reach ~20k tokens total
-            let user_query = format!("{} - Unique request #{}", generate_system_prompt(user_query_size), i);
-            let full_prompt = format!(
-                "{}\n\nUser: {}\nAssistant:",
-                system_prompt, user_query
+            let user_query = format!(
+                "{} - Unique request #{}",
+                generate_system_prompt(user_query_size),
+                i
             );
+            let full_prompt = format!("{}\n\nUser: {}\nAssistant:", system_prompt, user_query);
             prompts.push(full_prompt);
         }
 
-        println!("[Benchmark] {} - {} requests, avg size: ~{}KB",
-                 name, prompts.len(), prompts[0].len() / 1024);
+        println!(
+            "[Benchmark] {} - {} requests, avg size: ~{}KB",
+            name,
+            prompts.len(),
+            prompts[0].len() / 1024
+        );
 
         // Test with different cache configurations for this system prompt size
         let configs = vec![
-            (format!("{}_uncached", name), CacheConfig {
-                enable_l0: false,
-                l0_max_entries: 0,
-                enable_l1: false,
-                l1_max_memory: 0,
-                l1_granularity: 128,
-            }),
-            (format!("{}_L1_50MB", name), CacheConfig {
-                enable_l0: false,
-                l0_max_entries: 0,
-                enable_l1: true,
-                l1_max_memory: 50 * 1024 * 1024,
-                l1_granularity: 128,
-            }),
-            (format!("{}_L1_200MB", name), CacheConfig {
-                enable_l0: false,
-                l0_max_entries: 0,
-                enable_l1: true,
-                l1_max_memory: 200 * 1024 * 1024,
-                l1_granularity: 128,
-            }),
+            (
+                format!("{}_uncached", name),
+                CacheConfig {
+                    enable_l0: false,
+                    l0_max_entries: 0,
+                    enable_l1: false,
+                    l1_max_memory: 0,
+                    l1_granularity: 128,
+                },
+            ),
+            (
+                format!("{}_L1_50MB", name),
+                CacheConfig {
+                    enable_l0: false,
+                    l0_max_entries: 0,
+                    enable_l1: true,
+                    l1_max_memory: 50 * 1024 * 1024,
+                    l1_granularity: 128,
+                },
+            ),
+            (
+                format!("{}_L1_200MB", name),
+                CacheConfig {
+                    enable_l0: false,
+                    l0_max_entries: 0,
+                    enable_l1: true,
+                    l1_max_memory: 200 * 1024 * 1024,
+                    l1_granularity: 128,
+                },
+            ),
         ];
 
         for (bench_name, config) in configs {
@@ -1823,7 +1837,8 @@ fn bench_l1_cache_production_scale(c: &mut Criterion) {
                     if !printed.load(Ordering::Relaxed) {
                         let total_ops = iters * test_prompts.len() as u64;
                         let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
-                        let time_per_op_ms = (duration.as_micros() as f64 / total_ops as f64) / 1000.0;
+                        let time_per_op_ms =
+                            (duration.as_micros() as f64 / total_ops as f64) / 1000.0;
 
                         let cache_info = if is_uncached {
                             "N/A".to_string()
@@ -1912,10 +1927,14 @@ fn bench_l1_cache_eviction(c: &mut Criterion) {
         for query_idx in 0..queries_per_system {
             let user_query = format!(
                 "{} User request #{} with unique content details {}.",
-                MEDIUM_PROMPT, query_idx, "x".repeat(100)
+                MEDIUM_PROMPT,
+                query_idx,
+                "x".repeat(100)
             );
-            prompts.push(format!("{}\n\nUser: {}\nAssistant:",
-                system_prompt, user_query));
+            prompts.push(format!(
+                "{}\n\nUser: {}\nAssistant:",
+                system_prompt, user_query
+            ));
         }
     }
 
