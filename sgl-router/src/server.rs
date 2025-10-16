@@ -886,7 +886,6 @@ pub async fn startup(config: ServerConfig) -> Result<(), Box<dyn std::error::Err
                 l0_max_entries: config.router_config.tokenizer_cache.l0_max_entries,
                 enable_l1: config.router_config.tokenizer_cache.enable_l1,
                 l1_max_memory: config.router_config.tokenizer_cache.l1_max_memory,
-                l1_granularity: config.router_config.tokenizer_cache.l1_granularity,
             };
             Some(Arc::new(CachedTokenizer::new(base_tokenizer, cache_config)) as Arc<dyn Tokenizer>)
         } else {

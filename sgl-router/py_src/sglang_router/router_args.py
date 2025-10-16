@@ -477,7 +477,7 @@ class RouterArgs:
             f"--{prefix}tokenizer-cache-enable-l0",
             action="store_true",
             default=RouterArgs.tokenizer_cache_enable_l0,
-            help="Enable L0 (whole-string exact match) tokenizer cache (default: True)",
+            help="Enable L0 (whole-string exact match) tokenizer cache (default: False)",
         )
         parser.add_argument(
             f"--{prefix}tokenizer-cache-l0-max-entries",
@@ -489,19 +489,13 @@ class RouterArgs:
             f"--{prefix}tokenizer-cache-enable-l1",
             action="store_true",
             default=RouterArgs.tokenizer_cache_enable_l1,
-            help="Enable L1 (prefix matching) tokenizer cache (default: True)",
+            help="Enable L1 (prefix matching) tokenizer cache (default: False)",
         )
         parser.add_argument(
             f"--{prefix}tokenizer-cache-l1-max-memory",
             type=int,
             default=RouterArgs.tokenizer_cache_l1_max_memory,
             help="Maximum memory for L1 tokenizer cache in bytes (default: 50MB)",
-        )
-        parser.add_argument(
-            f"--{prefix}tokenizer-cache-l1-granularity",
-            type=int,
-            default=RouterArgs.tokenizer_cache_l1_granularity,
-            help="L1 cache granularity in bytes (default: 128)",
         )
         parser.add_argument(
             f"--{prefix}reasoning-parser",

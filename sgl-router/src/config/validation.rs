@@ -469,21 +469,6 @@ impl ConfigValidator {
             });
         }
 
-        // Validate L1 granularity (always check since it's used in cache calculations)
-        if cache.l1_granularity == 0 {
-            return Err(ConfigError::InvalidValue {
-                field: "tokenizer_cache.l1_granularity".to_string(),
-                value: cache.l1_granularity.to_string(),
-                reason: "Must be > 0".to_string(),
-            });
-        }
-
-        // Warn if L1 granularity is not a power of 2 (best practice)
-        if cache.l1_granularity & (cache.l1_granularity - 1) != 0 {
-            // Not a power of 2 - this is allowed but not optimal
-            // Just a note: we could add a warning system in the future
-        }
-
         Ok(())
     }
 

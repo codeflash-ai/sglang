@@ -279,9 +279,6 @@ struct CliArgs {
     #[arg(long, default_value_t = 52428800)]
     tokenizer_cache_l1_max_memory: usize,
 
-    #[arg(long, default_value_t = 128)]
-    tokenizer_cache_l1_granularity: usize,
-
     #[arg(long, default_value = "memory", value_parser = ["memory", "none", "oracle"])]
     history_backend: String,
 
@@ -598,7 +595,6 @@ impl CliArgs {
                 l0_max_entries: self.tokenizer_cache_l0_max_entries,
                 enable_l1: self.tokenizer_cache_enable_l1,
                 l1_max_memory: self.tokenizer_cache_l1_max_memory,
-                l1_granularity: self.tokenizer_cache_l1_granularity,
             },
         })
     }

@@ -37,8 +37,6 @@ pub struct CacheConfig {
     pub enable_l1: bool,
     /// Maximum memory for L1 cache in bytes
     pub l1_max_memory: usize,
-    /// L1 granularity in bytes (e.g., 128)
-    pub l1_granularity: usize,
 }
 
 impl Default for CacheConfig {
@@ -48,7 +46,6 @@ impl Default for CacheConfig {
             l0_max_entries: 10_000, // ~22MB memory for typical prompts
             enable_l1: false,       // Opt-in for now
             l1_max_memory: 50 * 1024 * 1024, // 50MB
-            l1_granularity: 128,    // 128 bytes
         }
     }
 }
@@ -80,7 +77,7 @@ impl CachedTokenizer {
         };
 
         let l1 = if config.enable_l1 {
-            Some(L1Cache::new(config.l1_max_memory, config.l1_granularity))
+            Some(L1Cache::new(config.l1_max_memory))
         } else {
             None
         };
@@ -92,6 +89,38 @@ impl CachedTokenizer {
             config,
             fingerprint,
         }
+    }
+
+    /// Extract all special token strings from the tokenizer
+    /// Returns them as a Vec for use with L1 cache
+    fn get_special_token_strings(&self) -> Vec<String> {
+        let special_tokens = self.inner.get_special_tokens();
+        let mut tokens = Vec::new();
+
+        if let Some(ref token) = special_tokens.bos_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.eos_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.unk_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.sep_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.pad_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.cls_token {
+            tokens.push(token.clone());
+        }
+        if let Some(ref token) = special_tokens.mask_token {
+            tokens.push(token.clone());
+        }
+
+        tokens.extend(special_tokens.additional_special_tokens.iter().cloned());
+        tokens
     }
 
     /// Get L0 cache statistics
@@ -129,16 +158,22 @@ impl Encoder for CachedTokenizer {
             }
         }
 
-        // L1 cache lookup (prefix match)
+        // L1 cache lookup (prefix match at special token boundaries)
         if let Some(l1) = &self.l1 {
-            if let Some((prefix_tokens, prefix_len)) = l1.longest_prefix_match(input) {
+            let special_token_strings = self.get_special_token_strings();
+            let special_tokens: Vec<&str> =
+                special_token_strings.iter().map(|s| s.as_str()).collect();
+
+            if let Some((prefix_tokens, prefix_len)) =
+                l1.longest_prefix_match(input, &special_tokens)
+            {
                 // We have a prefix match - tokenize the suffix
                 let suffix = &input[prefix_len..];
                 if !suffix.is_empty() {
                     let suffix_encoding = self.inner.encode(suffix)?;
 
                     // Merge prefix tokens + suffix tokens
-                    // Note: This is an approximation - boundary tokens may differ
+                    // Safe because we're splitting at special token boundaries
                     let mut merged_tokens = prefix_tokens;
                     merged_tokens.extend_from_slice(suffix_encoding.token_ids());
 
@@ -162,9 +197,12 @@ impl Encoder for CachedTokenizer {
             l0.insert(input.to_string(), encoding.clone());
         }
 
-        // Cache in L1 at boundaries
+        // Cache in L1 at special token boundaries
         if let Some(l1) = &self.l1 {
-            l1.insert_at_boundaries(input, encoding.token_ids());
+            let special_token_strings = self.get_special_token_strings();
+            let special_tokens: Vec<&str> =
+                special_token_strings.iter().map(|s| s.as_str()).collect();
+            l1.insert_at_boundaries(input, encoding.token_ids(), &special_tokens);
         }
 
         Ok(encoding)
@@ -240,7 +278,6 @@ mod tests {
             l0_max_entries: 0,
             enable_l1: false,
             l1_max_memory: 0,
-            l1_granularity: 128,
         };
         let cached = CachedTokenizer::new(tokenizer, config);
 

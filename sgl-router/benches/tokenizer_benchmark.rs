@@ -22,13 +22,15 @@ static TOKENIZER_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn get_tokenizer_path() -> &'static PathBuf {
     TOKENIZER_PATH.get_or_init(|| {
-        // Use DeepSeek-R1 which has chat template support
-        // Create a synchronous runtime to download the tokenizer
+        // Use Qwen3-4B-Instruct which has ChatML special tokens (<|im_start|>, <|im_end|>)
+        // with special: true, normalized: false - perfect for demonstrating L1 cache
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         let tokenizer_dir = rt.block_on(async {
-            sglang_router_rs::tokenizer::hub::download_tokenizer_from_hf("deepseek-ai/DeepSeek-R1")
-                .await
-                .expect("Failed to download DeepSeek-R1 tokenizer from HuggingFace")
+            sglang_router_rs::tokenizer::hub::download_tokenizer_from_hf(
+                "Qwen/Qwen3-4B-Instruct-2507",
+            )
+            .await
+            .expect("Failed to download Qwen3-4B-Instruct tokenizer from HuggingFace")
         });
 
         // The download_tokenizer_from_hf returns the directory containing tokenizer.json
@@ -1261,148 +1263,6 @@ fn bench_scaling_characteristics(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_cached_vs_uncached(c: &mut Criterion) {
-    let tokenizer_path = get_tokenizer_path();
-    let tokenizer = Arc::new(
-        HuggingFaceTokenizer::from_file(tokenizer_path.to_str().unwrap())
-            .expect("Failed to load tokenizer"),
-    );
-
-    // Create cached tokenizer
-    let cached_tokenizer = Arc::new(CachedTokenizer::new(
-        tokenizer.clone(),
-        CacheConfig::default(),
-    ));
-
-    // Pre-generate prompts
-    let system_4k = generate_system_prompt(4000);
-
-    let test_cases = vec![
-        ("short_30B", SHORT_PROMPT),
-        ("medium_230B", MEDIUM_PROMPT),
-        ("long_670B", LONG_PROMPT),
-        ("system_4KB", system_4k.as_str()),
-    ];
-
-    let mut group = c.benchmark_group("cache_comparison");
-
-    for (name, prompt) in test_cases {
-        let prompt_len = prompt.len();
-
-        // Benchmark uncached
-        let printed_uncached = Arc::new(AtomicBool::new(false));
-        group.bench_function(format!("{}_uncached", name), |b| {
-            let printed = printed_uncached.clone();
-            let tokenizer = tokenizer.clone();
-
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(tokenizer.encode(prompt).unwrap());
-                }
-                let duration = start.elapsed();
-
-                if !printed.load(Ordering::Relaxed) {
-                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
-                    let time_per_op = duration.as_micros() as f64 / iters as f64;
-
-                    let result = format!(
-                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12}",
-                        format!("{}_uncached", name),
-                        prompt_len,
-                        ops_per_sec,
-                        time_per_op,
-                        "baseline"
-                    );
-                    add_result("cache", result);
-
-                    printed.store(true, Ordering::Relaxed);
-                }
-
-                duration
-            });
-        });
-
-        // Benchmark cached (first call - miss)
-        let printed_miss = Arc::new(AtomicBool::new(false));
-        group.bench_function(format!("{}_cache_miss", name), |b| {
-            let printed = printed_miss.clone();
-
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    // Create fresh cached tokenizer for each iteration to ensure miss
-                    let fresh_cached =
-                        CachedTokenizer::new(tokenizer.clone(), CacheConfig::default());
-                    black_box(fresh_cached.encode(prompt).unwrap());
-                }
-                let duration = start.elapsed();
-
-                if !printed.load(Ordering::Relaxed) {
-                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
-                    let time_per_op = duration.as_micros() as f64 / iters as f64;
-
-                    let result = format!(
-                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12}",
-                        format!("{}_cache_miss", name),
-                        prompt_len,
-                        ops_per_sec,
-                        time_per_op,
-                        "miss"
-                    );
-                    add_result("cache", result);
-
-                    printed.store(true, Ordering::Relaxed);
-                }
-
-                duration
-            });
-        });
-
-        // Benchmark cached (subsequent calls - hit)
-        let cached_clone = cached_tokenizer.clone();
-        cached_clone.encode(prompt).unwrap(); // Prime the cache
-
-        let printed_hit = Arc::new(AtomicBool::new(false));
-        group.bench_function(format!("{}_cache_hit", name), |b| {
-            let printed = printed_hit.clone();
-            let cached = cached_clone.clone();
-
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(cached.encode(prompt).unwrap());
-                }
-                let duration = start.elapsed();
-
-                if !printed.load(Ordering::Relaxed) {
-                    let ops_per_sec = iters as f64 / duration.as_secs_f64();
-                    let time_per_op = duration.as_micros() as f64 / iters as f64;
-
-                    // Get cache stats
-                    let stats = cached.cache_stats().unwrap();
-
-                    let result = format!(
-                        "{:<20} | {:>8} | {:>12.0} | {:>12.1} | {:>12.1}%",
-                        format!("{}_cache_hit", name),
-                        prompt_len,
-                        ops_per_sec,
-                        time_per_op,
-                        stats.hit_rate * 100.0
-                    );
-                    add_result("cache", result);
-
-                    printed.store(true, Ordering::Relaxed);
-                }
-
-                duration
-            });
-        });
-    }
-
-    group.finish();
-}
-
 fn bench_l1_cache_chat_template(c: &mut Criterion) {
     let tokenizer_path = get_tokenizer_path();
     let tokenizer = Arc::new(
@@ -1422,10 +1282,16 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
         &generate_system_prompt(2000), // ~2KB - extensive context
     ];
 
-    // Create full prompts (simulating chat template)
+    // Create full prompts using ChatML format with special tokens
+    // Special tokens are atomic (special: true, normalized: false) - guaranteed safe for L1 cache
     let prompts: Vec<String> = user_queries
         .iter()
-        .map(|query| format!("{}\n\nUser: {}\nAssistant:", system_prompt, query))
+        .map(|query| {
+            format!(
+                "<|im_start|>system\n{}<|im_end|><|im_start|>user\n{}<|im_end|><|im_start|>assistant\n",
+                system_prompt, query
+            )
+        })
         .collect();
 
     let mut group = c.benchmark_group("l1_cache_chat");
@@ -1475,7 +1341,6 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
         l0_max_entries: 10_000,
         enable_l1: false,
         l1_max_memory: 0,
-        l1_granularity: 128,
     };
     let cached_l0_only = Arc::new(CachedTokenizer::new(tokenizer.clone(), l0_only_config));
 
@@ -1526,7 +1391,6 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
         l0_max_entries: 0,
         enable_l1: true,
         l1_max_memory: 50 * 1024 * 1024,
-        l1_granularity: 128,
     };
     let cached_l1_only = Arc::new(CachedTokenizer::new(tokenizer.clone(), l1_only_config));
 
@@ -1577,7 +1441,6 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
         l0_max_entries: 10_000,
         enable_l1: true,
         l1_max_memory: 50 * 1024 * 1024,
-        l1_granularity: 128,
     };
     let cached_l0_l1 = Arc::new(CachedTokenizer::new(
         tokenizer.clone(),
@@ -1644,7 +1507,6 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
                         l0_max_entries: 10_000,
                         enable_l1: true,
                         l1_max_memory: 50 * 1024 * 1024,
-                        l1_granularity: 128,
                     },
                 );
                 black_box(fresh_cached.encode(first_prompt).unwrap());
@@ -1711,320 +1573,6 @@ fn bench_l1_cache_chat_template(c: &mut Criterion) {
                     l1_stats.hit_rate * 100.0
                 );
                 add_result("l1_cache", result);
-
-                printed.store(true, Ordering::Relaxed);
-            }
-
-            duration
-        });
-    });
-
-    group.finish();
-}
-
-fn bench_l1_cache_production_scale(c: &mut Criterion) {
-    let tokenizer_path = get_tokenizer_path();
-    let tokenizer = Arc::new(
-        HuggingFaceTokenizer::from_file(tokenizer_path.to_str().unwrap())
-            .expect("Failed to load tokenizer"),
-    );
-
-    let mut group = c.benchmark_group("l1_production_scale");
-    group.measurement_time(Duration::from_secs(3));
-
-    // REALISTIC Production scenario:
-    // - 20k tokens total per request
-    // - System prompt: 10k tokens (SHARED across many requests)
-    // - User query: 10k tokens (UNIQUE per request)
-    // - High prefix reuse from shared system prompts
-
-    // Simulate 3 common system prompt sizes (matching production patterns)
-    let system_prompt_10k = generate_system_prompt(40000); // ~10k tokens
-    let system_prompt_5k = generate_system_prompt(20000); // ~5k tokens
-    let system_prompt_2k = generate_system_prompt(8000); // ~2k tokens
-
-    let system_prompts = vec![
-        ("10k_system", system_prompt_10k.as_str(), 40000), // Large system prompt
-        ("5k_system", system_prompt_5k.as_str(), 20000),   // Medium system prompt
-        ("2k_system", system_prompt_2k.as_str(), 8000),    // Small system prompt
-    ];
-
-    println!("\n[Benchmark] Production scenario: 20k tokens/req (system prompt SHARED, user query UNIQUE)");
-
-    for (name, system_prompt, _size) in &system_prompts {
-        // Generate 100 unique user queries for this system prompt
-        let mut prompts = Vec::new();
-        for i in 0..100 {
-            // Each user query is unique (matching total 20k tokens)
-            let user_query_size = 40000; // Adjust to reach ~20k tokens total
-            let user_query = format!(
-                "{} - Unique request #{}",
-                generate_system_prompt(user_query_size),
-                i
-            );
-            let full_prompt = format!("{}\n\nUser: {}\nAssistant:", system_prompt, user_query);
-            prompts.push(full_prompt);
-        }
-
-        println!(
-            "[Benchmark] {} - {} requests, avg size: ~{}KB",
-            name,
-            prompts.len(),
-            prompts[0].len() / 1024
-        );
-
-        // Test with different cache configurations for this system prompt size
-        let configs = vec![
-            (
-                format!("{}_uncached", name),
-                CacheConfig {
-                    enable_l0: false,
-                    l0_max_entries: 0,
-                    enable_l1: false,
-                    l1_max_memory: 0,
-                    l1_granularity: 128,
-                },
-            ),
-            (
-                format!("{}_L1_50MB", name),
-                CacheConfig {
-                    enable_l0: false,
-                    l0_max_entries: 0,
-                    enable_l1: true,
-                    l1_max_memory: 50 * 1024 * 1024,
-                    l1_granularity: 128,
-                },
-            ),
-            (
-                format!("{}_L1_200MB", name),
-                CacheConfig {
-                    enable_l0: false,
-                    l0_max_entries: 0,
-                    enable_l1: true,
-                    l1_max_memory: 200 * 1024 * 1024,
-                    l1_granularity: 128,
-                },
-            ),
-        ];
-
-        for (bench_name, config) in configs {
-            let is_uncached = !config.enable_l0 && !config.enable_l1;
-            let tokenizer_to_use: Arc<dyn Tokenizer> = if is_uncached {
-                tokenizer.clone()
-            } else {
-                Arc::new(CachedTokenizer::new(tokenizer.clone(), config))
-            };
-
-            let printed = Arc::new(AtomicBool::new(false));
-
-            group.bench_function(&bench_name, |b| {
-                let printed = printed.clone();
-                let tok = tokenizer_to_use.clone();
-                let test_prompts = prompts.clone();
-
-                b.iter_custom(|iters| {
-                    let start = Instant::now();
-
-                    // Process all prompts to properly warm up cache and measure prefix reuse
-                    for _ in 0..iters {
-                        for prompt in &test_prompts {
-                            black_box(tok.encode(prompt).unwrap());
-                        }
-                    }
-
-                    let duration = start.elapsed();
-
-                    if !printed.load(Ordering::Relaxed) {
-                        let total_ops = iters * test_prompts.len() as u64;
-                        let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
-                        let time_per_op_ms =
-                            (duration.as_micros() as f64 / total_ops as f64) / 1000.0;
-
-                        let cache_info = if is_uncached {
-                            "N/A".to_string()
-                        } else {
-                            // Get cache stats
-                            if let Some(cached) = tok.as_any().downcast_ref::<CachedTokenizer>() {
-                                if let Some(l1_stats) = cached.l1_cache_stats() {
-                                    format!(
-                                        "Hit:{:>5.1}% Entries:{:>6} Mem:{:>6}MB",
-                                        l1_stats.hit_rate * 100.0,
-                                        l1_stats.entries,
-                                        l1_stats.memory_bytes / (1024 * 1024)
-                                    )
-                                } else {
-                                    "N/A".to_string()
-                                }
-                            } else {
-                                "N/A".to_string()
-                            }
-                        };
-
-                        let result = format!(
-                            "{:<30} | {:>8}KB | {:>12.0} | {:>12.2}ms | {:>35}",
-                            bench_name,
-                            test_prompts[0].len() / 1024,
-                            ops_per_sec,
-                            time_per_op_ms,
-                            cache_info
-                        );
-                        add_result("l1_production", result);
-
-                        printed.store(true, Ordering::Relaxed);
-                    }
-
-                    duration
-                });
-            });
-        }
-    }
-
-    group.finish();
-}
-
-fn bench_l1_cache_eviction(c: &mut Criterion) {
-    let tokenizer_path = get_tokenizer_path();
-    let tokenizer = Arc::new(
-        HuggingFaceTokenizer::from_file(tokenizer_path.to_str().unwrap())
-            .expect("Failed to load tokenizer"),
-    );
-
-    let mut group = c.benchmark_group("l1_eviction");
-
-    // Test with small cache that will trigger eviction
-    let small_cache_config = CacheConfig {
-        enable_l0: false,
-        l0_max_entries: 0,
-        enable_l1: true,
-        l1_max_memory: 1024 * 1024, // Only 1MB - will trigger eviction
-        l1_granularity: 128,
-    };
-
-    // Test with large cache that won't trigger eviction
-    let large_cache_config = CacheConfig {
-        enable_l0: false,
-        l0_max_entries: 0,
-        enable_l1: true,
-        l1_max_memory: 50 * 1024 * 1024, // 50MB - no eviction
-        l1_granularity: 128,
-    };
-
-    // Generate prompts with realistic production patterns:
-    // - 10 different system prompts (simulating different chat contexts)
-    // - 200 unique user queries
-    // - Total: 2000 prompts with prefix reuse
-    let num_system_prompts = 10;
-    let queries_per_system = 200;
-
-    let mut system_prompts = Vec::new();
-    for i in 0..num_system_prompts {
-        let sys = generate_system_prompt(4000); // 4KB each
-        system_prompts.push(format!("System Context {}: {}", i, sys));
-    }
-
-    let mut prompts = Vec::new();
-    for system_prompt in &system_prompts {
-        for query_idx in 0..queries_per_system {
-            let user_query = format!(
-                "{} User request #{} with unique content details {}.",
-                MEDIUM_PROMPT,
-                query_idx,
-                "x".repeat(100)
-            );
-            prompts.push(format!(
-                "{}\n\nUser: {}\nAssistant:",
-                system_prompt, user_query
-            ));
-        }
-    }
-
-    // Shuffle to simulate random production traffic
-    use rand::seq::SliceRandom;
-    let mut rng = rand::rng();
-    prompts.shuffle(&mut rng);
-
-    // Test 1: Small cache with eviction
-    let cached_small = Arc::new(CachedTokenizer::new(tokenizer.clone(), small_cache_config));
-    let printed_small = Arc::new(AtomicBool::new(false));
-
-    group.bench_function("with_eviction_1mb", |b| {
-        let printed = printed_small.clone();
-        let cached = cached_small.clone();
-        let test_prompts = prompts.clone();
-
-        b.iter_custom(|iters| {
-            let start = Instant::now();
-            for _ in 0..iters {
-                // Encode all prompts - will trigger eviction
-                for prompt in &test_prompts {
-                    black_box(cached.encode(prompt).unwrap());
-                }
-            }
-            let duration = start.elapsed();
-
-            if !printed.load(Ordering::Relaxed) {
-                let total_ops = iters * test_prompts.len() as u64;
-                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
-                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
-
-                let stats = cached.l1_cache_stats().unwrap();
-
-                let result = format!(
-                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | Hit:{:>6.1}% Entries:{:>6} Mem:{:>8}KB",
-                    "L1 (1MB, eviction)",
-                    test_prompts[0].len(),
-                    ops_per_sec,
-                    time_per_op,
-                    stats.hit_rate * 100.0,
-                    stats.entries,
-                    stats.memory_bytes / 1024
-                );
-                add_result("l1_eviction", result);
-
-                printed.store(true, Ordering::Relaxed);
-            }
-
-            duration
-        });
-    });
-
-    // Test 2: Large cache without eviction
-    let cached_large = Arc::new(CachedTokenizer::new(tokenizer.clone(), large_cache_config));
-    let printed_large = Arc::new(AtomicBool::new(false));
-
-    group.bench_function("no_eviction_50mb", |b| {
-        let printed = printed_large.clone();
-        let cached = cached_large.clone();
-        let test_prompts = prompts.clone();
-
-        b.iter_custom(|iters| {
-            let start = Instant::now();
-            for _ in 0..iters {
-                // Encode all prompts - no eviction needed
-                for prompt in &test_prompts {
-                    black_box(cached.encode(prompt).unwrap());
-                }
-            }
-            let duration = start.elapsed();
-
-            if !printed.load(Ordering::Relaxed) {
-                let total_ops = iters * test_prompts.len() as u64;
-                let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
-                let time_per_op = duration.as_micros() as f64 / total_ops as f64;
-
-                let stats = cached.l1_cache_stats().unwrap();
-
-                let result = format!(
-                    "{:<25} | {:>8} | {:>12.0} | {:>12.1} | Hit:{:>6.1}% Entries:{:>6} Mem:{:>8}KB",
-                    "L1 (50MB, no eviction)",
-                    test_prompts[0].len(),
-                    ops_per_sec,
-                    time_per_op,
-                    stats.hit_rate * 100.0,
-                    stats.entries,
-                    stats.memory_bytes / 1024
-                );
-                add_result("l1_eviction", result);
 
                 printed.store(true, Ordering::Relaxed);
             }
@@ -2155,32 +1703,11 @@ fn print_summary() {
                         "Operation", "Calls/sec", "Time/call", "Improvement"
                     );
                 }
-                "cache" => {
-                    println!("CACHE PERFORMANCE (L0 WHOLE-STRING)");
-                    println!(
-                        "{:<20} | {:>8} | {:>12} | {:>12} | {:>12}",
-                        "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Status"
-                    );
-                }
                 "l1_cache" => {
                     println!("L1 CACHE (PREFIX MATCHING) - CHAT TEMPLATE");
                     println!(
                         "{:<25} | {:>8} | {:>12} | {:>12} | {:>20}",
                         "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Hit Rates"
-                    );
-                }
-                "l1_eviction" => {
-                    println!("L1 CACHE EVICTION (PRODUCTION STRESS TEST)");
-                    println!(
-                        "{:<25} | {:>8} | {:>12} | {:>12} | {:>50}",
-                        "Test Case", "Size(B)", "Ops/sec", "Time(µs)", "Cache Stats"
-                    );
-                }
-                "l1_production" => {
-                    println!("L1 CACHE PRODUCTION SCALE (20K TOKENS: SHARED SYSTEM + UNIQUE USER)");
-                    println!(
-                        "{:<30} | {:>9} | {:>12} | {:>13} | {:>35}",
-                        "Configuration", "Size", "Req/sec", "Time/req", "Cache Stats"
                     );
                 }
                 _ => {}
@@ -2207,10 +1734,7 @@ fn run_benchmarks(c: &mut Criterion) {
     bench_latency_distribution(c);
     bench_scaling_characteristics(c);
     bench_memory_efficiency(c);
-    bench_cached_vs_uncached(c);
     bench_l1_cache_chat_template(c);
-    bench_l1_cache_eviction(c);
-    bench_l1_cache_production_scale(c);
 
     // Print summary at the end
     print_summary();

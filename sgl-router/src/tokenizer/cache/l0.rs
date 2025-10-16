@@ -52,11 +52,14 @@ impl L0Cache {
         // Simple eviction: if we're at capacity, remove a random entry
         // DashMap doesn't support LRU directly, so we use a simple strategy
         if self.map.len() >= self.max_entries {
-            // Remove first entry (arbitrary eviction)
-            if let Some(entry) = self.map.iter().next() {
-                let key_to_remove = entry.key().clone();
-                drop(entry); // Release the lock
-                self.map.remove(&key_to_remove);
+            // Get the key to remove in a separate scope to ensure iterator is dropped
+            let key_to_remove = {
+                self.map.iter().next().map(|entry| entry.key().clone())
+            }; // Iterator fully dropped here, all locks released
+
+            // Now remove it
+            if let Some(k) = key_to_remove {
+                self.map.remove(&k);
             }
         }
 

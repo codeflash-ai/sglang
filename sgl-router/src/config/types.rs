@@ -99,9 +99,6 @@ pub struct TokenizerCacheConfig {
     /// Maximum memory for L1 cache in bytes
     #[serde(default = "default_l1_max_memory")]
     pub l1_max_memory: usize,
-    /// L1 granularity in bytes (boundary interval)
-    #[serde(default = "default_l1_granularity")]
-    pub l1_granularity: usize,
 }
 
 fn default_enable_l0() -> bool {
@@ -120,10 +117,6 @@ fn default_l1_max_memory() -> usize {
     50 * 1024 * 1024 // 50MB
 }
 
-fn default_l1_granularity() -> usize {
-    128
-}
-
 impl Default for TokenizerCacheConfig {
     fn default() -> Self {
         Self {
@@ -131,7 +124,6 @@ impl Default for TokenizerCacheConfig {
             l0_max_entries: default_l0_max_entries(),
             enable_l1: default_enable_l1(),
             l1_max_memory: default_l1_max_memory(),
-            l1_granularity: default_l1_granularity(),
         }
     }
 }
