@@ -735,9 +735,12 @@ def get_tma_aligned_size(x: int, element_size: int) -> int:
         M-axis shape of the LHS scaling tensor after padding.
     """
     tma_alignment_bytes = 16
-    assert tma_alignment_bytes % element_size == 0
     alignment = tma_alignment_bytes // element_size
-    return ceil_div(x, alignment) * alignment
+    assert tma_alignment_bytes % element_size == 0
+    remainder = x % alignment
+    if remainder == 0:
+        return x
+    return (x + alignment - remainder)
 
 
 @triton.jit
