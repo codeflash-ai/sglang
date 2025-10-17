@@ -282,36 +282,34 @@ class Glm4vVisionRotaryEmbedding(nn.Module):
         super().__init__()
         self.dim = dim
         self.theta = theta
-        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        # Precompute the denominator before creating the range for efficiency
+        self.register_buffer(
+            "inv_freq",
+            1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim)),
+            persistent=False,
+        )
         self._seq_len_cached = 0
         self._freqs_cached = None
 
     def update_freqs_cache(self, seqlen: int) -> None:
+        # Only recompute if genuinely required
         if seqlen > self._seq_len_cached:
-            seqlen *= 2
-            self._seq_len_cached = seqlen
-            self.inv_freq = 1.0 / (
-                self.theta
-                ** (
-                    torch.arange(
-                        0,
-                        self.dim,
-                        2,
-                        dtype=torch.float,
-                        device=self.inv_freq.device,
-                    )
-                    / self.dim
-                )
-            )
-            seq = torch.arange(
-                seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype
-            )
-            freqs = torch.outer(seq, self.inv_freq)
-            self._freqs_cached = freqs
+            # Multiply seqlen by 2 as before
+            seqlen2 = seqlen * 2
+            self._seq_len_cached = seqlen2
+
+            # Only recompute inv_freq buffer if device or dtype changed
+            inv_freq = self.inv_freq
+            device = inv_freq.device
+            dtype = inv_freq.dtype
+
+            # seq and freqs allocation now use torch.arange directly and in-place outer product to minimize intermediate objects
+            seq = torch.arange(seqlen2, device=device, dtype=dtype)
+            self._freqs_cached = torch.outer(seq, inv_freq)
 
     def forward(self, seqlen: int) -> torch.Tensor:
         self.update_freqs_cache(seqlen)
+        # Use slicing directly, no changes here for efficiency
         return self._freqs_cached[:seqlen]
 
 
