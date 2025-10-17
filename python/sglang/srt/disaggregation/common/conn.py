@@ -38,6 +38,8 @@ from sglang.srt.utils import (
     maybe_wrap_ipv6_address,
 )
 
+_OK_RESPONSE = web.Response(text="OK", status=200)
+
 logger = logging.getLogger(__name__)
 
 
@@ -481,7 +483,8 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
         self.app.router.add_get("/health", self._handle_health_check)
 
     async def _handle_health_check(self, request):
-        return web.Response(text="OK", status=200)
+        # Always return the static prebuilt response for efficiency
+        return _OK_RESPONSE
 
     async def _handle_route(self, request: web.Request):
         method = request.method
