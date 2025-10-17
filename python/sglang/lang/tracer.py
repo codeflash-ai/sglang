@@ -119,12 +119,14 @@ class TracerProgramState(ProgramState):
             for _ in range(size)
         ]
 
+        var_copy = dict(self.variables)
+        messages_copy = list(self.messages_)
         for i in range(size):
             node = SglGetForkItem(i)
             node.prev_node = fork_node
             states[i].last_node = node
-            states[i].variables = dict(self.variables)
-            states[i].messages_ = list(self.messages_)
+            states[i].variables = var_copy.copy() if i < size - 1 else var_copy
+            states[i].messages_ = messages_copy.copy() if i < size - 1 else messages_copy
             states[i].cur_role = self.cur_role
             states[i].chat_template = self.chat_template
 
