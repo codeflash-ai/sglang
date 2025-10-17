@@ -29,6 +29,8 @@ if TYPE_CHECKING:
         StandardDispatchOutput,
     )
 
+AWQ_MIN_CAPABILITY = AWQConfig.get_min_capability()
+
 
 def get_weight_perm(num_bits: int):
     perm_list: List[int] = []
@@ -89,16 +91,14 @@ class MoeWNA16Config(QuantizationConfig):
         elif self.linear_quant_method == "awq":
             capability_tuple = get_device_capability()
             device_capability = (
-                -1
-                if capability_tuple is None
+                -1 if capability_tuple is None or capability_tuple[0] is None or capability_tuple[1] is None
                 else capability_tuple[0] * 10 + capability_tuple[1]
             )
-            awq_min_capability = AWQConfig.get_min_capability()
-            if device_capability < awq_min_capability:
+            if device_capability < AWQ_MIN_CAPABILITY:
                 raise ValueError(
                     "The quantization method moe_wna16 + awq is not supported "
                     "for the current GPU. "
-                    f"Minimum capability: {awq_min_capability}. "
+                    f"Minimum capability: {AWQ_MIN_CAPABILITY}. "
                     f"Current capability: {device_capability}."
                 )
         else:
@@ -163,26 +163,20 @@ class MoeWNA16Config(QuantizationConfig):
 
     @classmethod
     def is_moe_wna16_compatible(cls, quant_config: Dict[str, Any]):
-        # Extract data from quant config.
         quant_method = quant_config.get("quant_method", "").lower()
         num_bits = quant_config.get("bits")
         desc_act = quant_config.get("desc_act")
 
-        capability_tuple = get_device_capability()
-        device_capability = (
-            -1
-            if all(capability is None for capability in capability_tuple)
-            else capability_tuple[0] * 10 + capability_tuple[1]
-        )
-        # Avoid circular import
-        awq_min_capability = AWQConfig.get_min_capability()
-
         gptq_compatible = quant_method == "gptq" and not desc_act and num_bits in [4, 8]
-        awq_compatible = (
-            quant_method == "awq"
-            and num_bits == 4
-            and device_capability >= awq_min_capability
-        )
+
+        awq_compatible = False
+        if quant_method == "awq" and num_bits == 4:
+            capability_tuple = get_device_capability()
+            device_capability = (
+                -1 if capability_tuple is None or capability_tuple[0] is None or capability_tuple[1] is None
+                else capability_tuple[0] * 10 + capability_tuple[1]
+            )
+            awq_compatible = device_capability >= AWQ_MIN_CAPABILITY
 
         return gptq_compatible or awq_compatible
 
