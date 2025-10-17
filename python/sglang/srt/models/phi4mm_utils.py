@@ -116,7 +116,7 @@ class Swish(nn.Module):
             x: torch.Tensor
                 Input.
         """
-        return x * self.act_fn(x)
+        return x * torch.sigmoid(x)
 
 
 class GLU(nn.Module):
