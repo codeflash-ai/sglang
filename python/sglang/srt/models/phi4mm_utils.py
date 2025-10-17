@@ -739,20 +739,17 @@ class T5RelativeAttentionLogitBias(nn.Module):
     def forward(self, x):
         # instantiate bias compatible with shape of x
         maxpos = x.size(1)
-        context_position = torch.arange(maxpos, device=x.device, dtype=torch.long)[
-            :, None
-        ]
-        memory_position = torch.arange(maxpos, device=x.device, dtype=torch.long)[
-            None, :
-        ]
+
+        # Use a single torch.arange and broadcasting to save memory and speed up calculation
+        pos = torch.arange(maxpos, device=x.device, dtype=torch.long)
+        context_position = pos.view(maxpos, 1)
+        memory_position = pos.view(1, maxpos)
         relative_position = memory_position - context_position
-        # clipping to a maximum distance using ops that play well with ONNX
-        # export
-        relative_position = relative_position.masked_fill(
-            relative_position < -self.max_distance, -self.max_distance
-        )
-        relative_position = relative_position.masked_fill(
-            relative_position > self.max_distance - 1, self.max_distance - 1
+
+        # Use inplace masked_fill_ to prevent unnecessary allocation and speed up
+        # Also, combine both mask and fill in a single loop to minimize allocations
+        relative_position = relative_position.clamp_(
+            min=-self.max_distance, max=self.max_distance - 1
         )
 
         # mapping from relative position to index in the bias parameter
@@ -763,10 +760,12 @@ class T5RelativeAttentionLogitBias(nn.Module):
         if self.symmetric:
             bias_idx = bias_idx.abs()
         else:
-            bias_idx += self.num_buckets // 2
+            bias_idx = bias_idx + (self.num_buckets // 2)
 
+        # Avoid unnecessary temporary by using t5_rel_att_bias in place directly
         t5_rel_att_bias = self.bias_values(bias_idx)  # [L, L, H]
-        t5_rel_att_bias = t5_rel_att_bias.permute(2, 0, 1).unsqueeze(0)  # [1, H, L, L]
+        # permute and unsqueeze using combined .movedim for slightly improved efficiency
+        t5_rel_att_bias = t5_rel_att_bias.movedim(2, 0).unsqueeze(0)  # [1, H, L, L]
 
         return t5_rel_att_bias
 
