@@ -218,7 +218,10 @@ class MoeWNA16Config(QuantizationConfig):
 
 
 def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
-    return any(module_name in prefix for module_name in modules_to_not_convert)
+    for module_name in modules_to_not_convert:
+        if module_name in prefix:
+            return True
+    return False
 
 
 class MoeWNA16Method(FusedMoEMethodBase):
