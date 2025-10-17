@@ -756,21 +756,33 @@ class ShardedStateLoader(BaseModelLoader):
 
         result: Dict[str, torch.Tensor] = {}
         for group in same_storage_groups.values():
+            if len(group) == 1:
+                k, t = group[0]
+                result[k] = t
+                continue
+            
+            # Precompute values to avoid redundant calls
+            group_data = []
             for k, t in group:
-                a, b = t.data_ptr(), get_end_ptr(t)
-                for k2, t2 in group:
-                    if not t2.is_contiguous():
+                a = t.data_ptr()
+                b = get_end_ptr(t)
+                is_contig = t.is_contiguous()
+                group_data.append((k, t, a, b, is_contig))
+            
+            for k, t, a, b, is_contig in group_data:
+                for k2, t2, a2, b2, is_contig2 in group_data:
+                    if not is_contig2:
                         continue
-                    a2, b2 = t2.data_ptr(), get_end_ptr(t2)
                     if a < a2 or b2 < b:
                         continue
-                    if a2 < a or b < b2 or not t.is_contiguous():
+                    if a2 < a or b < b2 or not is_contig:
                         break  # t2 covers strictly more memory than t.
                     if k2 < k:
                         # Same tensors, keep the one with the smaller key.
                         break
                 else:
                     result[k] = t
+
         return result
 
     def _prepare_weights(self, model_name_or_path: str, revision: Optional[str]):
