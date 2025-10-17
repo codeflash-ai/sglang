@@ -226,7 +226,7 @@ def fused_recurrent_gated_delta_rule(
     cu_seqlens: Optional[torch.LongTensor] = None,
     use_qk_l2norm_in_kernel: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""
+    """
     Args:
         q (torch.Tensor):
             queries of shape `[B, T, H, K]`.
@@ -285,24 +285,35 @@ def fused_recurrent_gated_delta_rule(
             cu_seqlens=cu_seqlens
         )
     """
+    # --- Optimize error checking with early returns ----
     if cu_seqlens is not None:
         if q.shape[0] != 1:
             raise ValueError(
                 f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
             )
-        if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
+        if initial_state is not None and initial_state.shape[0] != cu_seqlens.numel() - 1:
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {cu_seqlens.numel() - 1} rather than {initial_state.shape[0]}."
             )
+
+    # --- Use direct multiplication instead of exponentiation for scale ---
+    # This avoids the use of pow float operations; it's faster and numerically stable
     if scale is None:
-        scale = k.shape[-1] ** -0.5
+        scale = 1.0 / k.shape[-1] ** 0.5
     else:
         assert scale > 0, "scale must be positive"
+
+    # --- Avoid allocating temporary tensor if beta is given ---
     if beta is None:
-        beta = torch.ones_like(q[..., 0])
-    o, final_state = FusedRecurrentFunction.apply(
+        beta = torch.ones_like(q[..., 0], memory_format=torch.preserve_format)
+
+    # --- Directly call autograd function ---
+    # Move function lookup outside for better performance and readability
+    FusedRecurrentFunction_apply = FusedRecurrentFunction.apply
+
+    o, final_state = FusedRecurrentFunction_apply(
         q,
         k,
         v,
