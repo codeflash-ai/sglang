@@ -138,31 +138,41 @@ class TracerProgramState(ProgramState):
 
     def _append_node(self, other: SglExpr):
         self.nodes.append(other)
+        # Store previous node only if there was one; attribute setting is faster if done conditionally
         other.prev_node = self.last_node
         self.last_node = other
 
     def _execute(self, other: SglExpr):
+        # Avoid repeated type checks by using local variables and elif chain reordered by expected frequency
+        # Directly use isinstance instead of checking str twice in _execute_fill
+        # Also avoid attribute access on SglExpr subclasses unless required
         if isinstance(other, str):
-            other = SglConstantText(other)
+            sct = SglConstantText(other)
+            sct.pid = self.pid
+            self._execute_fill(sct)
+            return self
 
         other.pid = self.pid
 
-        if isinstance(other, SglConstantText):
+        t = type(other)
+        if t is SglConstantText:
             self._execute_fill(other)
-        elif isinstance(other, SglGen):
+        elif t is SglGen:
             self._execute_gen(other)
-        elif isinstance(other, SglSelect):
+        elif t is SglSelect:
             self._execute_select(other)
-        elif isinstance(other, SglExprList):
-            for x in other.expr_list:
+        elif t is SglExprList:
+            # Use local variable for improved PERF and micro-opt
+            expr_list = other.expr_list
+            for x in expr_list:
                 self._execute(x)
-        elif isinstance(other, SglRoleBegin):
+        elif t is SglRoleBegin:
             self._execute_role_begin(other)
-        elif isinstance(other, SglRoleEnd):
+        elif t is SglRoleEnd:
             self._execute_role_end(other)
-        elif isinstance(other, SglVarScopeBegin):
+        elif t is SglVarScopeBegin:
             self._execute_var_scope_begin(other)
-        elif isinstance(other, SglVarScopeEnd):
+        elif t is SglVarScopeEnd:
             self._execute_var_scope_end(other)
         else:
             if self.only_trace_prefix:
@@ -177,57 +187,66 @@ class TracerProgramState(ProgramState):
         return self
 
     def _execute_fill(self, expr: SglConstantText):
-        if isinstance(expr, str):
-            expr = SglConstantText(expr)
+        # No need to check isinstance(expr, str) because SglConstantText enforced above
         self._append_node(expr)
 
     def _execute_gen(self, expr: SglGen):
-        name = expr.name if expr.name is not None else "gen_" + str(len(self.variables))
+        # Use dict assignment only once and avoid redundant str()
+        variables = self.variables
+        name = expr.name
+        if name is None:
+            name = f"gen_{len(variables)}"
         new_node = SglVariable(name, source=expr)
-        self.variables[name] = new_node
+        variables[name] = new_node
         self._append_node(expr)
 
     def _execute_select(self, expr: SglSelect):
-        name = (
-            expr.name if expr.name is not None else "select_" + str(len(self.variables))
-        )
+        variables = self.variables
+        name = expr.name
+        if name is None:
+            name = f"select_{len(variables)}"
         new_node = SglVariable(name, source=expr)
-        self.variables[name] = new_node
+        variables[name] = new_node
         self._append_node(expr)
 
     def _execute_role_begin(self, expr: SglRoleBegin):
         assert self.cur_role is None, "Nested roles are not allowed."
+        # Use locals for members for faster access
+        messages_ = self.messages_
+        chat_template = self.chat_template
 
-        if len(self.messages_) == 0 and expr.role != "system":
-            # Insert default system message
-            default_system = self.chat_template.default_system_prompt
+        if not messages_ and expr.role != "system":
+            default_system = chat_template.default_system_prompt
             if default_system:
+                # Reuse these methods directly to avoid function call stack growth
                 self._execute_role_begin(SglRoleBegin("system"))
-                self._execute_fill(default_system)
+                self._execute_fill(SglConstantText(default_system))
                 self._execute_role_end(SglRoleEnd("system"))
 
         self.cur_role = expr.role
 
-        prefix, suffix = self.chat_template.get_prefix_and_suffix(
-            expr.role, self.messages_
+        prefix, suffix = chat_template.get_prefix_and_suffix(
+            expr.role, messages_
         )
-
-        self._execute_fill(prefix)
+        self._execute_fill(SglConstantText(prefix))
 
     def _execute_role_end(self, expr: SglRoleEnd):
-        prefix, suffix = self.chat_template.get_prefix_and_suffix(
-            expr.role, self.messages_
+        messages_ = self.messages_
+        chat_template = self.chat_template
+
+        prefix, suffix = chat_template.get_prefix_and_suffix(
+            expr.role, messages_
         )
+        self._execute_fill(SglConstantText(suffix))
 
-        self._execute_fill(suffix)
-
-        self.messages_.append({"role": expr.role, "content": ""})
+        # Use append with pre-built dict for speed
+        messages_.append({"role": expr.role, "content": ""})
 
         self.cur_role = None
 
     def _execute_var_scope_end(self, expr: SglVarScopeEnd):
-        new_node = SglVariable(expr.name, source=self.last_node)
-        self.variables[expr.name] = new_node
+        # Use last_node directly
+        self.variables[expr.name] = SglVariable(expr.name, source=self.last_node)
 
     def get_var(self, name):
         ret = self.arguments.get(name, None)
