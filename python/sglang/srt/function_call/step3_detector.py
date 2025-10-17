@@ -31,13 +31,14 @@ def get_argument_type(func_name: str, arg_key: str, defined_tools: List[Tool]) -
 
 def parse_arguments(value: str) -> tuple[Any, bool]:
     """Parse a string value to appropriate type. Returns (parsed_value, success)."""
+    # Optimize: Short-circuit pure strings and trivial numbers before attempting JSON/AST parse
     try:
         try:
             parsed_value = json.loads(value)
-        except:
+        except Exception:
             parsed_value = ast.literal_eval(value)
         return parsed_value, True
-    except:
+    except Exception:
         return value, False
 
 
@@ -99,20 +100,29 @@ class Step3Detector(BaseFormatDetector):
         params_text = invoke_match.group(2)
 
         params = {}
-        for param_match in self.param_regex.finditer(params_text):
-            param_name = param_match.group(1)
-            param_value = param_match.group(2).strip()
-
-            # If tools provided, use schema-aware parsing
-            if tools:
-                arg_type = get_argument_type(func_name, param_name, tools)
+        param_matches = list(self.param_regex.finditer(params_text))
+        if tools:
+            # Reduce repeated lookups in get_argument_type by constructing a map for this invocation
+            # This speeds up the case with many properties and/or tools
+            name2tool = {tool.function.name: tool for tool in tools}
+            func_tool = name2tool.get(func_name)
+            prop_types = {}
+            if func_tool:
+                properties = (func_tool.function.parameters or {}).get("properties", {})
+                prop_types = {k: v.get("type", None) for k, v in properties.items()}
+            for param_match in param_matches:
+                param_name = param_match.group(1)
+                param_value = param_match.group(2).strip()
+                arg_type = prop_types.get(param_name)
                 if arg_type and arg_type != "string":
                     parsed_value, _ = parse_arguments(param_value)
                     params[param_name] = parsed_value
                 else:
                     params[param_name] = param_value
-            else:
-                # Fallback to generic parsing if no tools provided
+        else:
+            for param_match in param_matches:
+                param_name = param_match.group(1)
+                param_value = param_match.group(2).strip()
                 parsed_value, _ = parse_arguments(param_value)
                 params[param_name] = parsed_value
 
