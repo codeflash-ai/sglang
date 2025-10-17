@@ -238,16 +238,15 @@ class TracerProgramState(ProgramState):
         return SglVariable(v.name, v.source)
 
     def flatten_nodes(self):
-        def traverse(cur):
-            if isinstance(cur, SglExprList):
-                for child in cur.expr_list:
-                    traverse(child)
-            else:
-                ret.append(cur)
-
         ret = []
-        for x in self.nodes:
-            traverse(x)
+        stack = self.nodes[::-1]
+        append = ret.append
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, SglExprList):
+                stack.extend(reversed(cur.expr_list))
+            else:
+                append(cur)
         return ret
 
     def __del__(self):
