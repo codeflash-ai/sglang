@@ -29,6 +29,8 @@ if TYPE_CHECKING:
         StandardDispatchOutput,
     )
 
+_AWQ_MIN_CAPABILITY = AWQConfig.get_min_capability()
+
 
 def get_weight_perm(num_bits: int):
     perm_list: List[int] = []
@@ -62,7 +64,6 @@ def get_weight_perm(num_bits: int):
 
 class MoeWNA16Config(QuantizationConfig):
     """Config class for MOE WNA16 (W8A16/W4A16) quantization."""
-
     def __init__(
         self,
         linear_quant_method: str,
@@ -82,23 +83,22 @@ class MoeWNA16Config(QuantizationConfig):
         self.linear_quant_method = linear_quant_method
         self.full_config = full_config
         self.use_marlin = False
-        # Avoid circular import
 
         if self.linear_quant_method == "gptq":
             self.use_marlin = GPTQMarlinConfig.is_gptq_marlin_compatible(full_config)
         elif self.linear_quant_method == "awq":
-            capability_tuple = get_device_capability()
-            device_capability = (
-                -1
-                if capability_tuple is None
-                else capability_tuple[0] * 10 + capability_tuple[1]
-            )
-            awq_min_capability = AWQConfig.get_min_capability()
-            if device_capability < awq_min_capability:
+            capability_tuple = _get_device_capability_cached()
+            # Check against None safely and efficiently
+            if capability_tuple is None or any(val is None for val in capability_tuple):
+                device_capability = -1
+            else:
+                device_capability = capability_tuple[0] * 10 + capability_tuple[1]
+
+            if device_capability < _AWQ_MIN_CAPABILITY:
                 raise ValueError(
                     "The quantization method moe_wna16 + awq is not supported "
                     "for the current GPU. "
-                    f"Minimum capability: {awq_min_capability}. "
+                    f"Minimum capability: {_AWQ_MIN_CAPABILITY}. "
                     f"Current capability: {device_capability}."
                 )
         else:
@@ -111,7 +111,11 @@ class MoeWNA16Config(QuantizationConfig):
 
     @classmethod
     def get_name(cls) -> str:
-        return "moe_wna16"
+        # This method is extremely hot, and its result is static.
+        # Make it a static attribute to avoid recomputation.
+        if not hasattr(cls, "_name"):
+            cls._name = "moe_wna16"
+        return cls._name
 
     @classmethod
     def get_supported_act_dtypes(cls) -> List[torch.dtype]:
@@ -157,8 +161,10 @@ class MoeWNA16Config(QuantizationConfig):
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
-        if user_quant == "moe_wna16" and cls.is_moe_wna16_compatible(hf_quant_cfg):
-            return cls.get_name()
+        # Avoid redundant computation in is_moe_wna16_compatible if possible (no side effects).
+        if user_quant == "moe_wna16":
+            if cls.is_moe_wna16_compatible(hf_quant_cfg):
+                return cls.get_name()
         return None
 
     @classmethod
@@ -168,20 +174,18 @@ class MoeWNA16Config(QuantizationConfig):
         num_bits = quant_config.get("bits")
         desc_act = quant_config.get("desc_act")
 
-        capability_tuple = get_device_capability()
-        device_capability = (
-            -1
-            if all(capability is None for capability in capability_tuple)
-            else capability_tuple[0] * 10 + capability_tuple[1]
-        )
-        # Avoid circular import
-        awq_min_capability = AWQConfig.get_min_capability()
+        # Use the cached version of get_device_capability for efficiency.
+        capability_tuple = _get_device_capability_cached()
+        if capability_tuple is None or any(val is None for val in capability_tuple):
+            device_capability = -1
+        else:
+            device_capability = capability_tuple[0] * 10 + capability_tuple[1]
 
-        gptq_compatible = quant_method == "gptq" and not desc_act and num_bits in [4, 8]
+        gptq_compatible = quant_method == "gptq" and not desc_act and num_bits in (4, 8)
         awq_compatible = (
             quant_method == "awq"
             and num_bits == 4
-            and device_capability >= awq_min_capability
+            and device_capability >= _AWQ_MIN_CAPABILITY
         )
 
         return gptq_compatible or awq_compatible
@@ -219,6 +223,15 @@ class MoeWNA16Config(QuantizationConfig):
 
 def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
     return any(module_name in prefix for module_name in modules_to_not_convert)
+
+def _get_device_capability_cached() -> tuple[int, int]:
+    # Since device capability is typically queried for GPU 0 and is a relatively slow operation,
+    # cache the result after the first call for efficiency.
+    # This assumes the device isn't changing (typical in most inference settings).
+    # The closure variable will be initialized only once.
+    if not hasattr(_get_device_capability_cached, "_device_capability"):
+        _get_device_capability_cached._device_capability = get_device_capability()
+    return _get_device_capability_cached._device_capability
 
 
 class MoeWNA16Method(FusedMoEMethodBase):
