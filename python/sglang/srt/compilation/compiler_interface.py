@@ -14,6 +14,7 @@ import torch.fx as fx
 
 from sglang.srt.compilation.compilation_counter import compilation_counter
 from sglang.srt.compilation.inductor_pass import pass_context
+import torch._dynamo.utils
 
 
 class CompilerInterface:
@@ -464,9 +465,11 @@ class InductorAdaptor(CompilerInterface):
         manually setting up internal contexts. But we also rely on non-public
         APIs which might not provide these guarantees.
         """
-        import torch._dynamo.utils
-
-        return torch._dynamo.utils.get_metrics_context()
+        # Cache function to avoid repeated imports
+        if not hasattr(self, "_get_metrics_context"):
+            import torch._dynamo.utils
+            self._get_metrics_context = torch._dynamo.utils.get_metrics_context
+        return self._get_metrics_context()
 
 
 def set_inductor_config(config, runtime_shape):
