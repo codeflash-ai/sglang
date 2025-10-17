@@ -74,10 +74,8 @@ class BaseReasoningFormatDetector:
         current_text = self._buffer
 
         # If the current text is a prefix of the think token, keep buffering
-        if any(
-            token.startswith(current_text) and token != current_text
-            for token in [self.think_start_token, self.think_end_token]
-        ):
+        if (self.think_start_token.startswith(current_text) and self.think_start_token != current_text) or \
+           (self.think_end_token.startswith(current_text) and self.think_end_token != current_text):
             return StreamingParseResult()
 
         # Strip `<think>` token if present
