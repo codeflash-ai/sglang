@@ -324,20 +324,23 @@ def get_embedding_chunk(
     start_index, end_index = 0, 0
     extend_start_index = extend_prefix_len
     extend_end_index = extend_prefix_len + extend_seq_len - 1
-
     for start, end in items_offset:
-        if extend_start_index >= start and extend_start_index <= end:
-            start_index += extend_start_index - start
-        elif extend_start_index > end:
+        if extend_start_index > end:
             start_index += end - start + 1
+        elif extend_start_index >= start:
+            start_index += extend_start_index - start
 
-        if extend_end_index >= start and extend_end_index <= end:
-            end_index += extend_end_index - start + 1
-        elif extend_end_index > end:
+        if extend_end_index > end:
             end_index += end - start + 1
+        elif extend_end_index >= start:
+            end_index += extend_end_index - start + 1
     # some models' embedding is 3-dim, reshape it to 2-dim
-    embedding = embedding.reshape(-1, embedding.shape[-1])
+    if embedding.ndim == 2:
+        embedding = embedding
+    else:
+        embedding = embedding.reshape(-1, embedding.shape[-1])
     embedding_chunk = embedding[start_index:end_index]
+
     return embedding_chunk, start_index, end_index
 
 
