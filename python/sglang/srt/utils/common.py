@@ -1792,14 +1792,15 @@ def get_device_core_count(device_id: int = 0) -> int:
 
 def get_device_capability(device_id: int = 0) -> Tuple[int, int]:
     major, minor = None, None
+    # Check in order and short-circuit once an available device is found
     if hasattr(torch, "cuda") and torch.cuda.is_available():
         major, minor = torch.cuda.get_device_capability(device_id)
+        return major, minor
 
     if hasattr(torch, "xpu") and torch.xpu.is_available():
-        major, minor, *_ = torch.xpu.get_device_capability(device_id)["version"].split(
-            "."
-        )
-        major, minor = int(major), int(minor)
+        version = torch.xpu.get_device_capability(device_id)["version"]
+        major, minor, *_ = version.split(".")
+        return int(major), int(minor)
 
     if hasattr(torch, "hpu") and torch.hpu.is_available():
         try:
