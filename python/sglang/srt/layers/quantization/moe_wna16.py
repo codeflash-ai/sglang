@@ -31,21 +31,38 @@ if TYPE_CHECKING:
 
 
 def get_weight_perm(num_bits: int):
+    # Precompute repeated indices for row calculation to avoid recomputation in the inner loop
+    row_base = np.array([0, 1, 4, 5])
     perm_list: List[int] = []
-    for i in range(32):
-        perm1: List[int] = []
+    # Use local variables to avoid repeated global lookups
+    range_32 = range(32)
+    range_4 = range(4)
+    # Preallocate perm1 to avoid repeated list allocation, and use index assignment for speed
+    perm1 = [0] * 8
+    for i in range_32:
         col = i // 4
-        for block in [0, 1]:
-            for row in [
-                2 * (i % 4),
-                2 * (i % 4) + 1,
-                2 * (i % 4 + 4),
-                2 * (i % 4 + 4) + 1,
-            ]:
-                perm1.append(16 * row + col + 8 * block)
-        for j in range(4):
-            perm_list.extend([p + 256 * j for p in perm1])
-
+        # Compute mod4 once
+        mod4 = i % 4
+        # Rows based on the original formula, grouped for performance
+        r0 = 2 * mod4
+        r1 = 2 * mod4 + 1
+        r2 = 2 * (mod4 + 4)
+        r3 = 2 * (mod4 + 4) + 1
+        # Instead of two loops over block, manually unroll for performance
+        perm1[0] = 16 * r0 + col + 0
+        perm1[1] = 16 * r1 + col + 0
+        perm1[2] = 16 * r2 + col + 0
+        perm1[3] = 16 * r3 + col + 0
+        perm1[4] = 16 * r0 + col + 8
+        perm1[5] = 16 * r1 + col + 8
+        perm1[6] = 16 * r2 + col + 8
+        perm1[7] = 16 * r3 + col + 8
+        # Add perm1 shifted by 256*j, inline and avoid temporary lists
+        base = i * 32  # 8 elements * 4 j's = 32 elements per i
+        for j in range_4:
+            offset = 256 * j
+            for k in range(8):
+                perm_list.append(perm1[k] + offset)
     perm = np.array(perm_list)
 
     if num_bits == 4:
@@ -55,8 +72,8 @@ def get_weight_perm(num_bits: int):
     else:
         raise Exception("num_bits must be 4 or 8, got {}".format(num_bits))
 
-    perm = perm.reshape((-1, len(interleave)))[:, interleave].ravel()
-    perm = torch.from_numpy(perm)
+    # Avoid extra copies: reshape and index on numpy, ravel once, conversion only at the end
+    perm = torch.from_numpy(perm.reshape(-1, len(interleave))[:, interleave].ravel())
     return perm
 
 
