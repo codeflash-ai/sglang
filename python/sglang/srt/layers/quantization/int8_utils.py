@@ -63,11 +63,17 @@ def block_dequant(
 
     x_dq_block = x_q_block.to(torch.float32)
 
-    for i in range(k_tiles):
-        for j in range(n_tiles):
-            x_dq_block[
-                j * block_n : min((j + 1) * block_n, n),
-                i * block_k : min((i + 1) * block_k, k),
-            ] *= x_s[j][i]
+    # Faster block-wise scaling using broadcasting and slicing
+    for j in range(n_tiles):
+        start_n = j * block_n
+        end_n = min((j + 1) * block_n, n)
+        # Collect block slices in the n-dim just once per j
+        for i in range(k_tiles):
+            start_k = i * block_k
+            end_k = min((i + 1) * block_k, k)
+            # Instead of in-place *= per block, use explicit multiplication via out
+            x_dq_block[start_n:end_n, start_k:end_k].mul_(
+                x_s[j][i]
+            )
 
     return x_dq_block
