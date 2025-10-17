@@ -18,15 +18,14 @@ logger = logging.getLogger(__name__)
 
 def get_argument_type(func_name: str, arg_key: str, defined_tools: List[Tool]) -> str:
     """Get the expected type for a function argument from tool schema."""
-    name2tool = {tool.function.name: tool for tool in defined_tools}
-    if func_name not in name2tool:
-        return None
-    tool = name2tool[func_name]
-    parameters = tool.function.parameters or {}
-    properties = parameters.get("properties", {})
-    if arg_key not in properties:
-        return None
-    return properties[arg_key].get("type", None)
+    for tool in defined_tools:
+        if tool.function.name == func_name:
+            parameters = tool.function.parameters or {}
+            properties = parameters.get("properties", {})
+            if arg_key not in properties:
+                return None
+            return properties[arg_key].get("type", None)
+    return None
 
 
 def parse_arguments(value: str) -> tuple[Any, bool]:
