@@ -48,9 +48,7 @@ class StandardDispatcher(BaseDispatcher):
     def dispatch(
         self, hidden_states: torch.Tensor, topk_output: TopKOutput
     ) -> DispatchOutput:
-        return StandardDispatchOutput(
-            hidden_states=hidden_states, topk_output=topk_output
-        )
+        return StandardDispatchOutput(hidden_states, topk_output)
 
     def combine(self, combine_input: CombineInput) -> torch.Tensor:
         if isinstance(combine_input, StandardCombineInput):
