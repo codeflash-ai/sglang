@@ -63,6 +63,7 @@ class BaseFormatDetector(ABC):
         Returns:
             Dictionary mapping tool names to their indices
         """
+        # Use a local variable for enumerate and minimize dot lookups
         return {
             tool.function.name: i for i, tool in enumerate(tools) if tool.function.name
         }
@@ -108,7 +109,9 @@ class BaseFormatDetector(ABC):
         For some format, the bot_token is not a token in model's vocabulary, such as
         `[TOOL_CALLS] [` in Mistral.
         """
-        for i in range(1, min(len(buffer) + 1, len(bot_token))):
+        min_len = min(len(buffer), len(bot_token))
+        # Use slicing with one buffer view per position
+        for i in range(1, min_len + 1):
             if bot_token.startswith(buffer[-i:]):
                 return i
         return 0

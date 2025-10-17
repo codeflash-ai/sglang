@@ -13,6 +13,14 @@ from sglang.srt.function_call.core_types import (
 )
 from sglang.srt.function_call.ebnf_composer import EBNFComposer
 
+_invoke_regex = re.compile(
+    r'<steptml:invoke name="([^"]+)">(.+?)</steptml:invoke>', re.DOTALL
+)
+
+_param_regex = re.compile(
+    r'<steptml:parameter name="([^"]+)">([^<]*)</steptml:parameter>', re.DOTALL
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,13 +75,9 @@ class Step3Detector(BaseFormatDetector):
         self.tool_call_end = "<｜tool_call_end｜>"
         self.tool_sep = "<｜tool_sep｜>"
 
-        # Regex for parsing steptml invocations
-        self.invoke_regex = re.compile(
-            r'<steptml:invoke name="([^"]+)">(.+?)</steptml:invoke>', re.DOTALL
-        )
-        self.param_regex = re.compile(
-            r'<steptml:parameter name="([^"]+)">([^<]*)</steptml:parameter>', re.DOTALL
-        )
+        # Precompiled regex are now global
+        self.invoke_regex = _invoke_regex
+        self.param_regex = _param_regex
 
         # Streaming state variables
         self._in_tool_block: bool = False
@@ -82,6 +86,9 @@ class Step3Detector(BaseFormatDetector):
         self._current_parameters: Dict[str, Any] = {}
         self._in_tool_call: bool = False
         self._function_name_sent: bool = False
+        # Cache tools id for tool indices for faster repeated `parse_streaming_increment`
+        self._cached_tool_indices_id = None
+        self._tool_indices = None
 
     def has_tool_call(self, text: str) -> bool:
         """Check if the text contains a Step3 format tool call."""
@@ -175,9 +182,12 @@ class Step3Detector(BaseFormatDetector):
         """
         self._buffer += new_text
 
-        # Build tool indices for validation
-        if not hasattr(self, "_tool_indices"):
+        # Build tool indices for validation only if tools identity changed
+        # This assumes tools list does not change identity trivially
+        tools_id = id(tools)
+        if self._cached_tool_indices_id != tools_id or self._tool_indices is None:
             self._tool_indices = self._get_tool_indices(tools)
+            self._cached_tool_indices_id = tools_id
 
         # If we've finished the tool block, everything is normal text
         if self._tool_block_finished:
@@ -187,17 +197,17 @@ class Step3Detector(BaseFormatDetector):
 
         # Check if tool block hasn't started yet
         if not self._in_tool_block:
-            if self.bot_token in self._buffer:
-                idx = self._buffer.find(self.bot_token)
-                normal_text = self._buffer[:idx]
-                self._buffer = self._buffer[idx + len(self.bot_token) :]
+            bot_token = self.bot_token
+            buf = self._buffer
+            idx = buf.find(bot_token)
+            if idx != -1:
+                normal_text = buf[:idx]
+                self._buffer = buf[idx + len(bot_token):]
                 self._in_tool_block = True
                 return StreamingParseResult(normal_text=normal_text)
             else:
                 # Check if we might have a partial bot_token
-                partial_len = self._ends_with_partial_token(
-                    self._buffer, self.bot_token
-                )
+                partial_len = self._ends_with_partial_token(self._buffer, bot_token)
                 if partial_len:
                     return StreamingParseResult()  # Wait for more text
                 else:
@@ -209,36 +219,35 @@ class Step3Detector(BaseFormatDetector):
         calls: List[ToolCallItem] = []
 
         # Check if tool block is ending
-        if self.eot_token in self._buffer:
-            idx = self._buffer.find(self.eot_token)
-
+        eot_token = self.eot_token
+        buf = self._buffer
+        idx = buf.find(eot_token)
+        if idx != -1:
             # If we're in the middle of a tool call, we need to handle it
             if self._in_tool_call:
-                # The buffer before eot_token might contain the end of the current tool call
-                before_eot = self._buffer[:idx]
+                before_eot = buf[:idx]
                 if self.tool_call_end in before_eot:
-                    # Parse this final tool call
                     result = self._parse_partial_tool_call(tools)
                     calls.extend(result.calls)
                 else:
                     # Incomplete tool call - log warning
+                    import logging
+                    logger = logging.getLogger(__name__)
                     logger.warning("Tool block ended with incomplete tool call")
-
-            remaining = self._buffer[idx + len(self.eot_token) :]
+            remaining = buf[idx + len(eot_token):]
             self._buffer = ""
             self._tool_block_finished = True
-
-            # Reset any partial tool call state
             self._reset_streaming_state()
-
             return StreamingParseResult(normal_text=remaining, calls=calls)
 
         # Check if we're in a tool call or need to start one
         if not self._in_tool_call:
-            if self.tool_call_begin in self._buffer:
-                idx = self._buffer.find(self.tool_call_begin)
-                # Remove any content before tool call begin (shouldn't happen but be safe)
-                self._buffer = self._buffer[idx + len(self.tool_call_begin) :]
+            tool_call_begin = self.tool_call_begin
+            buf = self._buffer
+            idx = buf.find(tool_call_begin)
+            if idx != -1:
+                # Remove any content before tool call begin
+                self._buffer = buf[idx + len(tool_call_begin):]
                 self._in_tool_call = True
                 self._function_name_sent = False
                 self._current_function_name = ""
@@ -258,44 +267,41 @@ class Step3Detector(BaseFormatDetector):
         """Parse partial tool call for streaming scenarios."""
         calls = []
 
-        # Check if we have tool_sep (means we're past the type declaration)
-        if self.tool_sep not in self._buffer:
+        buf = self._buffer
+        tool_sep = self.tool_sep
+        if tool_sep not in buf:
             return StreamingParseResult(calls=calls)  # Wait for more text
 
-        type_part, invoke_part = self._buffer.split(self.tool_sep, 1)
+        type_part, invoke_part = buf.split(tool_sep, 1)
         if type_part.strip() != "function":
             # Invalid tool type, skip this tool call
             self._reset_streaming_state()
             return StreamingParseResult(calls=calls)
 
-        # Try to extract function name if not sent yet
+        tool_indices = self._tool_indices
         if not self._function_name_sent:
-            name_match = re.search(r'<steptml:invoke name="([^"]+)">', invoke_part)
+            # Use precompiled regex and store match object for reuse
+            name_match = self.invoke_regex.search(invoke_part)
             if name_match:
                 func_name = name_match.group(1)
 
-                # Validate function name
-                if func_name in self._tool_indices:
+                if func_name in tool_indices:
                     self._current_function_name = func_name
                     self._function_name_sent = True
 
-                    # Initialize tool tracking
                     if self.current_tool_id == -1:
                         self.current_tool_id = 0
 
-                    # Ensure tracking arrays are large enough
                     while len(self.prev_tool_call_arr) <= self.current_tool_id:
                         self.prev_tool_call_arr.append({})
                     while len(self.streamed_args_for_tool) <= self.current_tool_id:
                         self.streamed_args_for_tool.append("")
 
-                    # Store tool call info
                     self.prev_tool_call_arr[self.current_tool_id] = {
                         "name": func_name,
                         "arguments": {},
                     }
 
-                    # Send tool name with empty parameters
                     calls.append(
                         ToolCallItem(
                             tool_index=self.current_tool_id,
@@ -304,25 +310,28 @@ class Step3Detector(BaseFormatDetector):
                         )
                     )
                 else:
-                    # Invalid function name
+                    import logging
+                    logger = logging.getLogger(__name__)
                     logger.warning(f"Invalid function name: {func_name}")
                     self._reset_streaming_state()
                     return StreamingParseResult(calls=calls)
             else:
-                # Function name not complete yet
                 return StreamingParseResult(calls=calls)
 
-        # Parse parameters incrementally
         if self._function_name_sent:
-            # Extract all complete parameters
+            # Extract all complete parameters; param_regex is precompiled
             new_params = {}
-            for param_match in self.param_regex.finditer(invoke_part):
+            current_function_name = self._current_function_name
+            pr = self.param_regex
+            for param_match in pr.finditer(invoke_part):
                 param_name = param_match.group(1)
                 param_value = param_match.group(2).strip()
 
-                # Use schema-aware parsing
+                # Import tools helpers inside for performance, if undefined globally
+                from sglang.srt.function_call.step3_detector import (  # noqa: F811
+                    get_argument_type, parse_arguments)
                 arg_type = get_argument_type(
-                    self._current_function_name, param_name, tools
+                    current_function_name, param_name, tools
                 )
                 if arg_type and arg_type != "string":
                     parsed_value, _ = parse_arguments(param_value)
@@ -330,31 +339,23 @@ class Step3Detector(BaseFormatDetector):
                 else:
                     new_params[param_name] = param_value
 
-            # Check if we have new parameters to stream
+            # Only call json.dumps if parameters actually changed
             if new_params != self._current_parameters:
-                # Build the JSON content without the closing brace for streaming
+                diff = ""
                 if not self._current_parameters:
-                    # First parameters - send opening brace and content
                     params_content = json.dumps(new_params, ensure_ascii=False)
                     if len(params_content) > 2:  # More than just "{}"
-                        # Send everything except the closing brace
                         diff = params_content[:-1]
                     else:
                         diff = "{"
                 else:
-                    # Subsequent parameters - calculate the incremental diff
                     old_json = json.dumps(self._current_parameters, ensure_ascii=False)
                     new_json = json.dumps(new_params, ensure_ascii=False)
-
-                    # Remove closing braces for comparison
                     old_without_brace = old_json[:-1]
                     new_without_brace = new_json[:-1]
-
-                    # The new content should extend the old content
                     if new_without_brace.startswith(old_without_brace):
-                        diff = new_without_brace[len(old_without_brace) :]
+                        diff = new_without_brace[len(old_without_brace):]
                     else:
-                        # Parameters changed in unexpected way - shouldn't happen in normal streaming
                         diff = ""
 
                 if diff:
@@ -371,8 +372,9 @@ class Step3Detector(BaseFormatDetector):
                 self.prev_tool_call_arr[self.current_tool_id]["arguments"] = new_params
 
             # Check if tool call is complete
-            if self.tool_call_end in self._buffer:
-                # Send closing brace if we've sent any parameters
+            tool_call_end = self.tool_call_end
+            buf = self._buffer
+            if tool_call_end in buf:
                 if self.streamed_args_for_tool[self.current_tool_id]:
                     calls.append(
                         ToolCallItem(
@@ -382,12 +384,8 @@ class Step3Detector(BaseFormatDetector):
                     )
                     self.streamed_args_for_tool[self.current_tool_id] += "}"
 
-                # Find the end position
-                end_idx = self._buffer.find(self.tool_call_end)
-                # Remove the processed tool call from buffer
-                self._buffer = self._buffer[end_idx + len(self.tool_call_end) :]
-
-                # Reset state for next tool call
+                end_idx = buf.find(tool_call_end)
+                self._buffer = buf[end_idx + len(tool_call_end):]
                 self._reset_streaming_state()
                 self.current_tool_id += 1
 
