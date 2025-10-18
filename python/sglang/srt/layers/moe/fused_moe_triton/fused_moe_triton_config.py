@@ -124,14 +124,6 @@ def get_default_config(
 ) -> Dict[str, int]:
     if dtype == "fp8_w8a8":
         if block_shape is None:
-            config = {
-                "BLOCK_SIZE_M": 128,
-                "BLOCK_SIZE_N": 256,
-                "BLOCK_SIZE_K": 128,
-                "GROUP_SIZE_M": 32,
-                "num_warps": 8,
-                "num_stages": 2 if _is_hip else 4,
-            }
             if M <= E:
                 config = {
                     "BLOCK_SIZE_M": 64,
@@ -139,6 +131,15 @@ def get_default_config(
                     "BLOCK_SIZE_K": 128,
                     "GROUP_SIZE_M": 1,
                     "num_warps": 4,
+                    "num_stages": 2 if _is_hip else 4,
+                }
+            else:
+                config = {
+                    "BLOCK_SIZE_M": 128,
+                    "BLOCK_SIZE_N": 256,
+                    "BLOCK_SIZE_K": 128,
+                    "GROUP_SIZE_M": 32,
+                    "num_warps": 8,
                     "num_stages": 2 if _is_hip else 4,
                 }
         else:
@@ -152,19 +153,19 @@ def get_default_config(
                 "num_stages": 2 if _is_hip else 3,
             }
     else:
-        config = {
-            "BLOCK_SIZE_M": 64,
-            "BLOCK_SIZE_N": 64,
-            "BLOCK_SIZE_K": 32,
-            "GROUP_SIZE_M": 8,
-        }
-        # A heuristic: fused marlin works faster with this config for small M
         if M <= E or (is_marlin and M <= 32):
             config = {
                 "BLOCK_SIZE_M": 16,
                 "BLOCK_SIZE_N": 32,
                 "BLOCK_SIZE_K": 64,
                 "GROUP_SIZE_M": 1,
+            }
+        else:
+            config = {
+                "BLOCK_SIZE_M": 64,
+                "BLOCK_SIZE_N": 64,
+                "BLOCK_SIZE_K": 32,
+                "GROUP_SIZE_M": 8,
             }
     return config
 
