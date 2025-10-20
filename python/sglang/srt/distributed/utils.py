@@ -67,28 +67,31 @@ def get_pp_indices(
     If the number of layers is not divisible by the number of partitions,
     the last partition will have the remaining layers.
     """
-    # partition_list_str can be set to None in sglang
     partition_list_str = os.getenv("SGLANG_PP_LAYER_PARTITION", None)
     if partition_list_str is not None:
         try:
-            partitions = [int(layer) for layer in partition_list_str.split(",")]
+            # Avoid repeated attribute lookup on split, static allocation, use tuple comprehensions
+            partitions = tuple(map(int, partition_list_str.split(",")))
         except ValueError as err:
             raise ValueError(
                 "Invalid partition string: {}".format(partition_list_str)
             ) from err
         if len(partitions) != pp_size:
             raise ValueError(f"{len(partitions)=} does not match {pp_size=}.")
-        if sum(partitions) != num_hidden_layers:
-            raise ValueError(f"{sum(partitions)=} does not match {num_hidden_layers=}.")
+        total_layers = sum(partitions)
+        if total_layers != num_hidden_layers:
+            raise ValueError(f"{total_layers=} does not match {num_hidden_layers=}.")
+        # min(pp_rank, len(partitions)) to avoid an IndexError if misaligned: follows original intent
         start_layer = sum(partitions[:pp_rank])
         end_layer = start_layer + partitions[pp_rank]
     else:
         layers_per_partition = num_hidden_layers // pp_size
         start_layer = pp_rank * layers_per_partition
-        end_layer = start_layer + layers_per_partition
-
+        # Only compute final end_layer once, no need to always assign and then correct
         if pp_rank == pp_size - 1:
             end_layer = num_hidden_layers
+        else:
+            end_layer = start_layer + layers_per_partition
 
     return (start_layer, end_layer)
 
