@@ -139,14 +139,21 @@ def get_backend_from_name(name: str) -> BaseLoRABackend:
     """
     Get corresponding backend class from backend's name
     """
+    if not hasattr(get_backend_from_name, "_cache"):
+        get_backend_from_name._cache = {}
+
+    cache = get_backend_from_name._cache
+
     if name == "triton":
-        from sglang.srt.lora.backend.triton_backend import TritonLoRABackend
-
-        return TritonLoRABackend
+        if "triton" not in cache:
+            from sglang.srt.lora.backend.triton_backend import TritonLoRABackend
+            cache["triton"] = TritonLoRABackend
+        return cache["triton"]
     elif name == "csgmv":
-        from sglang.srt.lora.backend.chunked_backend import ChunkedSgmvLoRABackend
-
-        return ChunkedSgmvLoRABackend
+        if "csgmv" not in cache:
+            from sglang.srt.lora.backend.chunked_backend import ChunkedSgmvLoRABackend
+            cache["csgmv"] = ChunkedSgmvLoRABackend
+        return cache["csgmv"]
     elif name == "flashinfer":
         raise ValueError(
             "FlashInfer LoRA backend has been deprecated, please use `triton` instead."
