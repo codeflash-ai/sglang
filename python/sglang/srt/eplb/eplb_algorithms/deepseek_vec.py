@@ -1,6 +1,7 @@
 # This file is copied from https://github.com/deepseek-ai/EPLB/blob/main/eplb.py since that one is not a pypi package
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 
 
@@ -13,22 +14,22 @@ def pack_groups(tokens_per_group: torch.Tensor, num_nodes: int) -> torch.Tensor:
     ret = torch.full_like(
         tokens_per_group, fill_value=-1, dtype=torch.int64, device="cpu"
     )
+    tokens_per_group_np = tokens_per_group.cpu().numpy()
+    indices_np = indices.numpy()
+    ret_np = ret.numpy()
     for layer in range(num_layers):
-        node_tokens = [0] * num_nodes
-        node_groups = [0] * num_nodes
-        for group in indices[layer]:
-
-            def key_func(rank: int) -> int:
-                if node_groups[rank] >= groups_per_rank:
-                    return 1, 0
-                else:
-                    return 0, node_tokens[rank]
-
-            rank = min(range(num_nodes), key=key_func)
+        node_tokens = np.zeros(num_nodes, dtype=np.float32)
+        node_groups = np.zeros(num_nodes, dtype=np.int32)
+        for group in indices_np[layer]:
+            valid_ranks = (node_groups < groups_per_rank)
+            subset_tokens = node_tokens.copy()
+            subset_tokens[~valid_ranks] = np.inf
+            rank = np.argmin(subset_tokens)
             assert node_groups[rank] < groups_per_rank
-            ret[layer, group] = rank * groups_per_rank + node_groups[rank]
-            node_tokens[rank] += tokens_per_group[layer, group]
+            ret_np[layer, group] = rank * groups_per_rank + node_groups[rank]
+            node_tokens[rank] += tokens_per_group_np[layer, group]
             node_groups[rank] += 1
+    ret = torch.from_numpy(ret_np)
     return ret
 
 
