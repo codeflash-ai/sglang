@@ -28,7 +28,7 @@ def ensure_divisibility(numerator, denominator):
 def divide(numerator, denominator):
     """Ensure that numerator is divisible by the denominator and return
     the division value."""
-    ensure_divisibility(numerator, denominator)
+    assert numerator % denominator == 0, f"{numerator} is not divisible by {denominator}"
     return numerator // denominator
 
 
