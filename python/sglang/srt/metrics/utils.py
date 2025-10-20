@@ -19,15 +19,18 @@ from typing import List
 def two_sides_exponential_buckets(
     middle: float, base: float, count: int
 ) -> List[float]:
-    buckets = []
     half_count = math.ceil(count / 2)
     distance = 1
-    buckets.append(middle)
-    for i in range(half_count):
+    # Precompute all buckets and avoid set + sort at the end
+    # Use a dict as a temporary ordered unique store
+    buckets_dict = {middle: None}
+    for _ in range(half_count):
         distance *= base
-        buckets.append(middle + distance)
-        buckets.append(max(0, middle - distance))
-    return sorted(set(buckets))
+        buckets_dict[middle + distance] = None
+        v = middle - distance
+        buckets_dict[max(0, v)] = None
+    # Efficient deduplication and sorting
+    return sorted(buckets_dict.keys())
 
 
 def generate_buckets(
