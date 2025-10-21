@@ -423,8 +423,13 @@ def _move_param_to_cpu(param, pin_memory: bool):
 
 
 def _create_cpu_data(data, pin_memory: bool):
-    cpu_data = _empty_strided_like(
-        data,
+    if data.device.type == "cpu" and data.is_pinned() == pin_memory:
+        return data.clone() if data._is_view() else data
+    cpu_data = torch.empty_strided(
+        size=data.size(),
+        stride=data.stride(),
+        dtype=data.dtype,
+        layout=data.layout,
         device="cpu",
         pin_memory=pin_memory,
     )
