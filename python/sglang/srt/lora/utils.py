@@ -7,6 +7,8 @@ import torch
 
 from sglang.srt.utils.hf_transformers_utils import AutoConfig
 
+_LAYER_ID_RE = re.compile(r"layers\.(\d+)\.")
+
 
 @dataclass
 class LoRABatchInfo:
@@ -50,7 +52,7 @@ def get_layer_id(name: str) -> int:
     """
     Extract integer id of layer from its name in string.
     """
-    match = re.search(r"layers\.(\d+)\.", name)
+    match = _LAYER_ID_RE.search(name)
     if match is None:
         return None
     return int(match.group(1))
