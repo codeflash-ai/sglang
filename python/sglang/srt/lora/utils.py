@@ -100,7 +100,8 @@ def get_normalized_target_modules(
     Mapping a list of target module name to names of the normalized LoRA weights.
     Handles both base module names (e.g., "gate_proj") and prefixed module names (e.g., "feed_forward.gate_proj").
     """
-    params_mapping = {
+    # Move params_mapping to a module-level constant for re-use and to avoid recreation on every function call
+    _PARAMS_MAPPING = {
         "q_proj": "qkv_proj",
         "k_proj": "qkv_proj",
         "v_proj": "qkv_proj",
@@ -108,10 +109,14 @@ def get_normalized_target_modules(
         "up_proj": "gate_up_proj",
     }
 
+    # Use a direct loop as before, but optimize the base_name extraction:
+    # Avoid split and just rpartition (faster and avoids allocating intermediate lists)
     result = set()
+    get = _PARAMS_MAPPING.get
     for name in target_modules:
-        base_name = name.split(".")[-1]
-        normalized_name = params_mapping.get(base_name, base_name)
+        # rpartition returns ('prefix', 'sep', 'suffix'); if no dot, suffix == whole string
+        base_name = name.rpartition(".")[2]
+        normalized_name = get(base_name, base_name)
         result.add(normalized_name)
     return result
 
