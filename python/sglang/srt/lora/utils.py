@@ -7,6 +7,11 @@ import torch
 
 from sglang.srt.utils.hf_transformers_utils import AutoConfig
 
+_STACKED_RANK = {
+    "qkv_proj": 3,
+    "gate_up_proj": 2,
+}
+
 
 @dataclass
 class LoRABatchInfo:
@@ -120,11 +125,7 @@ def get_stacked_multiply(module_name: str) -> int:
     """
     Mapping a lora module name to its magnification at output dimension
     """
-    stacked_rank = {
-        "qkv_proj": 3,
-        "gate_up_proj": 2,
-    }
-    return stacked_rank[module_name] if module_name in stacked_rank else 1
+    return _STACKED_RANK.get(module_name, 1)
 
 
 def get_target_module_name(full_module_name: str, target_modules: Set[str]) -> str:
