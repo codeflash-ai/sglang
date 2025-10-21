@@ -99,7 +99,7 @@ class TimeStats:
             return "Unknown Time Stats"
 
     def format_duration(self, duration: float) -> str:
-        return f"{duration * 1e3:.2f}ms"
+        return "%.2fms" % (duration * 1e3)
 
     def disagg_mode_str(self) -> str:
         if self.disagg_mode == DisaggregationMode.NULL:
