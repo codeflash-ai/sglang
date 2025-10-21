@@ -110,9 +110,25 @@ class PetitNvFp4Config(QuantizationConfig):
         return _is_hip and quant_method == "modelopt"
 
     def is_layer_excluded(self, prefix: str, exclude_modules: list):
-        for pattern in exclude_modules:
-            regex_str = pattern.replace(".", r"\.").replace("*", r".*")
-            if re.fullmatch(regex_str, prefix):
+        # Pre-compile regex patterns for performance.
+        if not hasattr(self, '_exclude_modules_regex_cache') or self._exclude_modules_regex_cache is None:
+            comp_regex = []
+            for pattern in exclude_modules:
+                regex_str = pattern.replace(".", r"\.").replace("*", r".*")
+                comp_regex.append(re.compile(rf"^{regex_str}$"))
+            self._exclude_modules_regex_cache = comp_regex
+            self._exclude_modules_last_source = list(exclude_modules)
+        # If exclude_modules input changes, update regex cache.
+        elif exclude_modules != self._exclude_modules_last_source:
+            comp_regex = []
+            for pattern in exclude_modules:
+                regex_str = pattern.replace(".", r"\.").replace("*", r".*")
+                comp_regex.append(re.compile(rf"^{regex_str}$"))
+            self._exclude_modules_regex_cache = comp_regex
+            self._exclude_modules_last_source = list(exclude_modules)
+
+        for regex in self._exclude_modules_regex_cache:
+            if regex.fullmatch(prefix):
                 return True
         return False
 
