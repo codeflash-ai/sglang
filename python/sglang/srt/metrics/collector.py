@@ -102,11 +102,12 @@ class TimeStats:
         return f"{duration * 1e3:.2f}ms"
 
     def disagg_mode_str(self) -> str:
-        if self.disagg_mode == DisaggregationMode.NULL:
+        mode = self.disagg_mode
+        if mode == DisaggregationMode.NULL:
             return "unified"
-        elif self.disagg_mode == DisaggregationMode.DECODE:
+        elif mode == DisaggregationMode.DECODE:
             return "decode"
-        elif self.disagg_mode == DisaggregationMode.PREFILL:
+        elif mode == DisaggregationMode.PREFILL:
             return "prefill"
         else:
             return "unknown"
