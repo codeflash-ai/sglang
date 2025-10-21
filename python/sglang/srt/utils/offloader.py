@@ -20,6 +20,13 @@ from sglang.srt.utils.host_shared_memory import (
     set_host_shared_memory_manager,
 )
 
+_MODE_TO_CLASS = {
+    "meta": None,           # will be patched after all classes defined
+    "cpu": None,
+    "shm_cpu": None,
+    "sharded_gpu": None,
+}
+
 logger = logging.getLogger(__name__)
 
 _SubmoduleAccessor = Callable[[torch.nn.Module], torch.nn.Module]
@@ -328,12 +335,12 @@ class _ModuleOffloader(ABC):
 class _BaseParamOffloader(ABC):
     @staticmethod
     def create(mode: str, **kwargs) -> "_BaseParamOffloader":
-        return {
-            "meta": _MetaParamOffloader,
-            "cpu": _CpuParamOffloader,
-            "shm_cpu": _ShmCpuParamOffloader,
-            "sharded_gpu": _ShardedGpuParamOffloader,
-        }[mode](**kwargs)
+        # Faster lookup by using the precomputed global dict, and avoids reconstructing dict each call
+        try:
+            cls = _MODE_TO_CLASS[mode]
+        except KeyError:
+            raise KeyError(f"Invalid mode: {mode!r}")
+        return cls(**kwargs)
 
     def __init__(self, module, param_name):
         self._module = module
