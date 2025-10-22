@@ -114,16 +114,17 @@ def interleave_scales(scales: torch.Tensor) -> torch.Tensor:
     s_shape = scales.shape
     # Reshape to separate groups of 4
     alignment = 4 if s_shape[2] % 4 == 0 else 1
-    scales_interleaved = scales.reshape(
+    # Use view instead of reshape for potentially better performance when possible
+    scales_interleaved = scales.view(
         s_shape[0], s_shape[1], (s_shape[2] // alignment), alignment
     )
     # Permute dimensions to interleave
     scales_interleaved = scales_interleaved.permute(0, 2, 1, 3)
-    # Reshape back to original dimensions but with interleaved values
-    scales_interleaved = scales_interleaved.reshape(
+    # Combine last two dimensions efficiently
+    scales_interleaved = scales_interleaved.contiguous().view(
         s_shape[0], s_shape[2] // alignment, s_shape[1] * alignment
     )
-    return scales_interleaved.contiguous()
+    return scales_interleaved
 
 
 class W4AFp8MoEMethod(FusedMoEMethodBase):
