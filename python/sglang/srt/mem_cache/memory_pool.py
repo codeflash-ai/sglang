@@ -725,7 +725,15 @@ class MHATokenToKVPool(KVCache):
         return self._get_value_buffer(layer_id)
 
     def get_kv_buffer(self, layer_id: int):
-        return self.get_key_buffer(layer_id), self.get_value_buffer(layer_id)
+        counter = self.layer_transfer_counter
+        idx = layer_id - self.start_layer
+        if counter is not None:
+            counter.wait_until(idx)
+        kbuf = self.k_buffer[idx]
+        vbuf = self.v_buffer[idx]
+        if self.store_dtype != self.dtype:
+            return kbuf.view(self.dtype), vbuf.view(self.dtype)
+        return kbuf, vbuf
 
     def set_kv_buffer(
         self,
