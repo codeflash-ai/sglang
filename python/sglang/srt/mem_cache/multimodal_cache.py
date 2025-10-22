@@ -21,6 +21,9 @@ class MultiModalCache:
 
     def _allocate(self, embedding_size: int) -> bool:
         """Allocate space by evicting least recently used entries"""
+        if self.current_size + embedding_size <= self.max_size:
+            return True
+
         evictions = 0
         while self.current_size + embedding_size > self.max_size and self.mm_cache:
             _, old_embedding = self.mm_cache.popitem(last=False)
@@ -38,7 +41,7 @@ class MultiModalCache:
         return True
 
     def put(self, mm_hash: int, embedding: torch.Tensor) -> bool:
-        data_size = self._get_tensor_size(embedding)
+        data_size = embedding.element_size() * embedding.numel()
         # Lazy free cache if not enough space
         if not self._allocate(data_size):
             return False
