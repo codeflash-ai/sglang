@@ -1,6 +1,5 @@
 import logging
 from collections import OrderedDict
-from typing import Dict
 
 import torch
 
@@ -22,11 +21,33 @@ class MultiModalCache:
     def _allocate(self, embedding_size: int) -> bool:
         """Allocate space by evicting least recently used entries"""
         evictions = 0
-        while self.current_size + embedding_size > self.max_size and self.mm_cache:
-            _, old_embedding = self.mm_cache.popitem(last=False)
-            evicted_size = self._get_tensor_size(old_embedding)
-            self.current_size -= evicted_size
-            evictions += evicted_size
+        cache = self.mm_cache
+        current_size = self.current_size
+        max_size = self.max_size
+
+        # Precompute the required free space
+        required_free = current_size + embedding_size - max_size
+        # Early exit if no evictions required
+        if required_free <= 0:
+            return True
+
+        # Collect embeddings until we free enough space (minimize repeated computation)
+        pop = cache.popitem
+        get_tensor_size = torch.Tensor.numel  # Avoid repeated attribute lookup
+        element_size = None
+
+        freed = 0
+        while current_size + embedding_size > max_size and cache:
+            _, old_embedding = pop(last=False)
+            # Cache element_size value for all tensors - usually all tensors have the same dtype so this is an optimization
+            if element_size is None:
+                element_size = old_embedding.element_size()
+            evicted_size = get_tensor_size(old_embedding) * element_size
+            current_size -= evicted_size
+            freed += evicted_size
+
+        self.current_size = current_size
+        evictions = freed
 
         if evictions > 0:
             logger.debug(
