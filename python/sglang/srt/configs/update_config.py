@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
 
 DEFAULT_MOE_PADDING_SIZE = 32
 
@@ -50,21 +51,20 @@ def get_num_heads_padding_size(tp_size, weight_block_size):
 
 def update_intermediate_size(model_config, attr_name, intermediate_padding_size):
     attr_value = intermediate_padding_size
-    if hasattr(model_config, "hf_config") and hasattr(
-        model_config.hf_config, attr_name
-    ):
-        attr_value = getattr(model_config.hf_config, attr_name)
+    # Cache attribute lookups to reduce repeated getattr/hasattr costs
+    hf_config = getattr(model_config, "hf_config", None)
+    if hf_config is not None and hasattr(hf_config, attr_name):
+        attr_value = getattr(hf_config, attr_name)
     elif hasattr(model_config, attr_name):
         attr_value = getattr(model_config, attr_name)
 
     if attr_value % intermediate_padding_size != 0:
-        from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
-
         attr_value = pad_vocab_size(attr_value, intermediate_padding_size)
-        if hasattr(model_config, "hf_config"):
-            setattr(model_config.hf_config, attr_name, attr_value)
-            if hasattr(model_config, "hf_text_config"):
-                setattr(model_config.hf_text_config, attr_name, attr_value)
+        if hf_config is not None:
+            setattr(hf_config, attr_name, attr_value)
+            hf_text_config = getattr(model_config, "hf_text_config", None)
+            if hf_text_config is not None:
+                setattr(hf_text_config, attr_name, attr_value)
         else:
             setattr(model_config, attr_name, attr_value)
 
