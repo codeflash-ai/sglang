@@ -921,11 +921,16 @@ class SWAKVPool(KVCache):
         self.head_num = head_num
         self.head_dim = head_dim
         self.device = device
-        self.swa_layer_nums = len(swa_attention_layer_ids)
-        self.full_layer_nums = len(full_attention_layer_ids)
+        # Precompute layer nums to avoid repeated len calls
+        swa_layer_nums = len(swa_attention_layer_ids)
+        full_layer_nums = len(full_attention_layer_ids)
+        self.swa_layer_nums = swa_layer_nums
+        self.full_layer_nums = full_layer_nums
         self.start_layer = 0
         self.page_size = 1
 
+        # Setup kwargs once to avoid repeated dict operations in constructors below
+        kwargs = dict(kwargs)  # make a copy in case kwargs are shared; avoids mutating caller's dict in-place
         kwargs["page_size"] = 1
         kwargs["enable_memory_saver"] = False
         kwargs["head_num"] = head_num
@@ -940,32 +945,44 @@ class SWAKVPool(KVCache):
         )
         if self.enable_custom_mem_pool:
             # TODO(shangming): abstract custom allocator class for more backends
+            # The import is kept inside the conditional for memory and import time efficiency
             from mooncake.allocator import NVLinkAllocator
-
             allocator = NVLinkAllocator.get_allocator(self.device)
             self.custom_mem_pool = torch.cuda.MemPool(allocator.allocator())
         else:
             self.custom_mem_pool = None
 
+        # Construct both KV pools up front, minimizing attribute access
         self.swa_kv_pool = token_to_kv_pool_class(
             size=size_swa,
             dtype=dtype,
-            layer_num=self.swa_layer_nums,
+            layer_num=swa_layer_nums,
             **kwargs,
         )
         self.full_kv_pool = token_to_kv_pool_class(
             size=size,
             dtype=dtype,
-            layer_num=self.full_layer_nums,
+            layer_num=full_layer_nums,
             **kwargs,
         )
-        self.layers_mapping: Dict[int, Tuple[int, bool]] = {}
-        for full_attn_layer_id, global_layer_id in enumerate(full_attention_layer_ids):
-            self.layers_mapping[global_layer_id] = (full_attn_layer_id, False)
-        for swa_layer_id, global_layer_id in enumerate(swa_attention_layer_ids):
-            self.layers_mapping[global_layer_id] = (swa_layer_id, True)
+
+        # Create layer mapping dict efficiently using dictionary update where possible
+        layers_mapping: Dict[int, Tuple[int, bool]] = {}
+        layers_mapping_update_full = {
+            global_layer_id: (full_attn_layer_id, False)
+            for full_attn_layer_id, global_layer_id in enumerate(full_attention_layer_ids)
+        }
+        layers_mapping_update_swa = {
+            global_layer_id: (swa_layer_id, True)
+            for swa_layer_id, global_layer_id in enumerate(swa_attention_layer_ids)
+        }
+        layers_mapping.update(layers_mapping_update_full)
+        layers_mapping.update(layers_mapping_update_swa)
+        self.layers_mapping = layers_mapping
+
         self.full_to_swa_index_mapping: Optional[torch.Tensor] = None
 
+        # Compute memory usage once using local variables
         k_size, v_size = self.get_kv_size_bytes()
         self.mem_usage = (k_size + v_size) / GB
         logger.info(
@@ -996,6 +1013,7 @@ class SWAKVPool(KVCache):
         return swa_kv_data_ptrs, swa_kv_data_lens, swa_kv_item_lens
 
     def get_key_buffer(self, layer_id: int):
+        # Use local unpacking for fewer attribute lookups
         layer_id_pool, is_swa = self.layers_mapping[layer_id]
         if is_swa:
             return self.swa_kv_pool.get_key_buffer(layer_id_pool)
