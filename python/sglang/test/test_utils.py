@@ -25,6 +25,7 @@ import aiohttp
 import numpy as np
 import requests
 import torch
+import torch.distributed
 import torch.nn.functional as F
 
 from sglang.bench_serving import run_benchmark
@@ -192,10 +193,15 @@ def call_generate_vllm(prompt, temperature, max_tokens, stop=None, n=1, url=None
     }
     res = requests.post(url, json=data)
     assert res.status_code == 200
+    # Parse the response JSON only once (saves redundant parsing)
+    resp_json = res.json()
+    text = resp_json["text"]
+    prompt_len = len(prompt)
     if n == 1:
-        pred = res.json()["text"][0][len(prompt) :]
+        pred = text[0][prompt_len :]
     else:
-        pred = [x[len(prompt) :] for x in res.json()["text"]]
+        # Use list comprehension with precomputed prompt_len and text
+        pred = [x[prompt_len :] for x in text]
     return pred
 
 
