@@ -73,7 +73,10 @@ def _get_tile_tokens_dim(num_tokens, top_k, num_experts):
     # And pad the number to the next power of 2.
     tile_tokens_dim = next_power_of_2(num_tokens_per_expert)
     # Cap to 8-64 tokens per CTA tile as it's the range supported by the kernel.
-    tile_tokens_dim = min(max(tile_tokens_dim, 8), 64)
+    if tile_tokens_dim < 8:
+        tile_tokens_dim = 8
+    elif tile_tokens_dim > 64:
+        tile_tokens_dim = 64
     return tile_tokens_dim
 
 
