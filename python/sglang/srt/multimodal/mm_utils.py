@@ -36,14 +36,23 @@ import numpy as np
 import pybase64
 from PIL import Image
 
-from sglang.srt.utils import flatten_nested_list
-
 
 def has_valid_data(data) -> bool:
+    # Optimized: In-place traversal with short-circuit for first non-list, non-None element
     if data is None:
         return False
     if isinstance(data, list):
-        return any(has_valid_data(item) for item in flatten_nested_list(data))
+        # Stack-based traversal for performance and early exit
+        stack = list(data)
+        while stack:
+            current = stack.pop()
+            if current is None:
+                continue
+            if isinstance(current, list):
+                stack.extend(current)
+            else:
+                return True
+        return False
     return True
 
 
