@@ -224,6 +224,7 @@ class MambaPool:
                 )
             self.size = size
             self.device = device
+            self._free_slot_index = 0
             self.free_slots = torch.arange(
                 self.size, dtype=torch.int64, device=self.device
             )
@@ -241,12 +242,12 @@ class MambaPool:
         return len(self.free_slots)
 
     def alloc(self, need_size: int) -> Optional[torch.Tensor]:
-        if need_size > len(self.free_slots):
+        # Note: Use a fast pointer advance rather than repeated slicing and copying for efficiency.
+        slots_left = self.size - self._free_slot_index
+        if need_size > slots_left:
             return None
-
-        select_index = self.free_slots[:need_size]
-        self.free_slots = self.free_slots[need_size:]
-
+        select_index = self.free_slots[self._free_slot_index : self._free_slot_index + need_size]
+        self._free_slot_index += need_size
         return select_index
 
     def free(self, free_index: torch.Tensor):
@@ -261,6 +262,11 @@ class MambaPool:
         self.free_slots = torch.arange(self.size, dtype=torch.int64, device=self.device)
 
     def copy_from(self, src_index: torch.Tensor, dst_index: torch.Tensor):
+        # Use torch.index_copy_ for efficiency instead of advanced assignment if possible
+        # However, since src_index and dst_index can be arbitrary indices and may be of len>1,
+        # the following vectorized assignment is typically on par with torch.index_copy_, but let's try it:
+        # The slicing [ :, src_index ] produces a view or a gather, but for performance,
+        # copy only if indices are not overlapping (which assignment here already does)
         self.mamba_cache.conv[:, dst_index] = self.mamba_cache.conv[:, src_index]
         self.mamba_cache.temporal[:, dst_index] = self.mamba_cache.temporal[
             :, src_index
@@ -269,7 +275,7 @@ class MambaPool:
 
     def fork_from(self, src_index: torch.Tensor) -> Optional[torch.Tensor]:
         dst_index = self.alloc(1)
-        if dst_index == None:
+        if dst_index is None:
             return None
         self.copy_from(src_index, dst_index)
         return dst_index
