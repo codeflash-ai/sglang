@@ -926,11 +926,15 @@ class SWAKVPool(KVCache):
         self.start_layer = 0
         self.page_size = 1
 
-        kwargs["page_size"] = 1
-        kwargs["enable_memory_saver"] = False
-        kwargs["head_num"] = head_num
-        kwargs["head_dim"] = head_dim
-        kwargs["device"] = device
+        # Apply only relevant changes to kwargs up front, so repeated dict setitem is avoided below
+        kwargs = {
+            **kwargs,
+            "page_size": 1,
+            "enable_memory_saver": False,
+            "head_num": head_num,
+            "head_dim": head_dim,
+            "device": device
+        }
         # TODO MHATransposedTokenToKVPool if enable_kvcache_transpose is True
         assert not enable_kvcache_transpose
 
@@ -947,23 +951,32 @@ class SWAKVPool(KVCache):
         else:
             self.custom_mem_pool = None
 
-        self.swa_kv_pool = token_to_kv_pool_class(
-            size=size_swa,
-            dtype=dtype,
-            layer_num=self.swa_layer_nums,
+        # Precompute all required kwargs so dict unpacking happens once per call
+        swa_kwargs = {
             **kwargs,
-        )
-        self.full_kv_pool = token_to_kv_pool_class(
-            size=size,
-            dtype=dtype,
-            layer_num=self.full_layer_nums,
+            "size": size_swa,
+            "dtype": dtype,
+            "layer_num": self.swa_layer_nums,
+        }
+        full_kwargs = {
             **kwargs,
-        )
+            "size": size,
+            "dtype": dtype,
+            "layer_num": self.full_layer_nums,
+        }
+
+        self.swa_kv_pool = token_to_kv_pool_class(**swa_kwargs)
+        self.full_kv_pool = token_to_kv_pool_class(**full_kwargs)
+
+        # Combine layers mapping calculation to minimize dict operations and reduce local lookup cost
         self.layers_mapping: Dict[int, Tuple[int, bool]] = {}
-        for full_attn_layer_id, global_layer_id in enumerate(full_attention_layer_ids):
-            self.layers_mapping[global_layer_id] = (full_attn_layer_id, False)
-        for swa_layer_id, global_layer_id in enumerate(swa_attention_layer_ids):
-            self.layers_mapping[global_layer_id] = (swa_layer_id, True)
+        # Prefer local binding for .layers_mapping for speed
+        layers_mapping = self.layers_mapping
+        for full_attn_layer_id, global_layer_id in zip(range(self.full_layer_nums), full_attention_layer_ids):
+            layers_mapping[global_layer_id] = (full_attn_layer_id, False)
+        for swa_layer_id, global_layer_id in zip(range(self.swa_layer_nums), swa_attention_layer_ids):
+            layers_mapping[global_layer_id] = (swa_layer_id, True)
+        
         self.full_to_swa_index_mapping: Optional[torch.Tensor] = None
 
         k_size, v_size = self.get_kv_size_bytes()
@@ -989,11 +1002,8 @@ class SWAKVPool(KVCache):
         return kv_data_ptrs, kv_data_lens, kv_item_lens
 
     def get_state_buf_infos(self):
-        swa_kv_data_ptrs, swa_kv_data_lens, swa_kv_item_lens = (
-            self.swa_kv_pool.get_contiguous_buf_infos()
-        )
-
-        return swa_kv_data_ptrs, swa_kv_data_lens, swa_kv_item_lens
+        # Direct tuple unpacking is already optimal
+        return self.swa_kv_pool.get_contiguous_buf_infos()
 
     def get_key_buffer(self, layer_id: int):
         layer_id_pool, is_swa = self.layers_mapping[layer_id]
