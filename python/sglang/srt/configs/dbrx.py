@@ -115,7 +115,7 @@ class DbrxFFNConfig(PretrainedConfig):
         uniform_expert_assignment: bool = False,
         **kwargs: Any,
     ):
-        super().__init__()
+        # Fast path for default ffn_act_fn initialization
         if ffn_act_fn is None:
             ffn_act_fn = {"name": "silu"}
         self.ffn_act_fn = ffn_act_fn
@@ -127,11 +127,18 @@ class DbrxFFNConfig(PretrainedConfig):
         self.moe_normalize_expert_weights = moe_normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
 
-        for k in ["model_type"]:
-            if k in kwargs:
-                kwargs.pop(k)
-        if len(kwargs) != 0:
+        # Remove known items in a single pass
+        removed = False
+        if "model_type" in kwargs:
+            kwargs.pop("model_type")
+            removed = True
+
+        if kwargs:
+            # Don't call super().__init__ before error raising, since it may perform extra work (negligible but more robust)
             raise ValueError(f"Found unknown {kwargs=}")
+
+        # Call super last for efficiency, since it isn't needed for checks above
+        super().__init__()
 
     @classmethod
     def from_pretrained(
@@ -143,19 +150,18 @@ class DbrxFFNConfig(PretrainedConfig):
             pretrained_model_name_or_path, **kwargs
         )
 
+        # Fast inline access, avoids extra function call when key missing
         if config_dict.get("model_type") == "dbrx":
             config_dict = config_dict["ffn_config"]
 
-        if (
-            "model_type" in config_dict
-            and hasattr(cls, "model_type")
-            and config_dict["model_type"] != cls.model_type
-        ):
+        # Merge conditions for performance; avoid hasattr call when not needed
+        model_type = config_dict.get("model_type")
+        if model_type is not None and getattr(cls, "model_type", None) is not None and model_type != cls.model_type:
             logger.warning(
                 "You are using a model of type %s to instantiate a model of "
                 "type %s. This is not supported for all "
                 "configurations of models and can yield errors.",
-                config_dict["model_type"],
+                model_type,
                 cls.model_type,
             )
 
