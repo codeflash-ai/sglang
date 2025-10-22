@@ -97,7 +97,7 @@ class ReqToTokenPool:
             return None
 
         select_index = self.free_slots[:need_size]
-        self.free_slots = self.free_slots[need_size:]
+        del self.free_slots[:need_size]
 
         return select_index
 
