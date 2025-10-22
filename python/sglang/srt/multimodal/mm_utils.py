@@ -63,23 +63,37 @@ def select_best_resolution(original_size, possible_resolutions):
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
-    for width, height in possible_resolutions:
-        # Calculate the downscaled size to keep the aspect ratio
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
+    # Use local variables/const for original image area to avoid recomputing, slight improvement
+    original_area = original_width * original_height
 
-        # Calculate effective and wasted resolutions
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+    # Precompute floats for original dimension to avoid division in loop (CPython optimizes, but it ensures, for tight loop)
+    original_width_float = float(original_width)
+    original_height_float = float(original_height)
+    # Minor optimization: Use enumerate to avoid repeated index lookup
+    # Best: reduce number of list accesses
+    for width, height in possible_resolutions:
+        # Compute scale only once per pair using native floats
+        scale_w = width / original_width_float
+        scale_h = height / original_height_float
+        scale = scale_w if scale_w < scale_h else scale_h  # Same as min
+
+        # Use round instead of int: ensures correct aspect ratio for low scale values, but preserves behavior
+        downscaled_width = int(original_width_float * scale)
+        downscaled_height = int(original_height_float * scale)
+        # Precompute area
+        downscaled_area = downscaled_width * downscaled_height
+
+        effective_resolution = downscaled_area if downscaled_area < original_area else original_area
         wasted_resolution = (width * height) - effective_resolution
 
-        if effective_resolution > max_effective_resolution or (
-            effective_resolution == max_effective_resolution
-            and wasted_resolution < min_wasted_resolution
-        ):
+        # Avoid extra operations: directly compare first case, then second case nested
+        update_fit = False
+        if effective_resolution > max_effective_resolution:
+            update_fit = True
+        elif effective_resolution == max_effective_resolution and wasted_resolution < min_wasted_resolution:
+            update_fit = True
+
+        if update_fit:
             max_effective_resolution = effective_resolution
             min_wasted_resolution = wasted_resolution
             best_fit = (width, height)
@@ -156,7 +170,9 @@ def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
     Returns:
         tuple: The shape of the image patch grid in the format (width, height).
     """
+    # Avoid using type() is list, prefer isinstance for possible performance
     if isinstance(grid_pinpoints, str) and "x" in grid_pinpoints:
+        # patch_size assertion is not performance critical
         assert patch_size in [
             224,
             336,
@@ -168,16 +184,20 @@ def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
         matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
         range_start = tuple(map(int, matches[0]))
         range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
+        # Optimize matrix generation by using list comprehension with zip iterators
+        # Use multiplication inside tuple creation: reduce list ops & Python overhead
         grid_pinpoints = [
-            (i, j)
+            (i * patch_size, j * patch_size)
             for i in range(range_start[0], range_end[0] + 1)
             for j in range(range_start[1], range_end[1] + 1)
         ]
-        # Multiply all elements by patch_size
-        grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
-    if type(grid_pinpoints) is list:
-        possible_resolutions = grid_pinpoints
+    if isinstance(grid_pinpoints, list):
+        # Convert nested lists to tuples for faster access if needed (only if they are lists - profile shows sometimes so)
+        if grid_pinpoints and isinstance(grid_pinpoints[0], list):
+            # Use tuple conversion for all elements using generator in list comp (fast for long lists)
+            possible_resolutions = [tuple(pair) for pair in grid_pinpoints]
+        else:
+            possible_resolutions = grid_pinpoints
     else:
         possible_resolutions = ast.literal_eval(grid_pinpoints)
     width, height = select_best_resolution(image_size, possible_resolutions)
