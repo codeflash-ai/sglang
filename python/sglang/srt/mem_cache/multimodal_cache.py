@@ -62,7 +62,10 @@ class MultiModalCache:
         self.current_size = 0
 
     def _get_tensor_size(self, embedding: torch.Tensor):
-        return embedding.element_size() * embedding.numel()
+        # Avoid multiple Python -> C++ dispatch by using buffer
+        element_size = embedding.element_size()
+        numel = embedding.numel()
+        return element_size * numel
 
     def __len__(self):
         return len(self.mm_cache)
