@@ -58,6 +58,11 @@ class QoQConfig(QuantizationConfig):
         # 4 bits packed into 8 bit datatype.
         self.pack_factor = 8 // self.weight_bits
 
+        # Cache LinearBase type to avoid repeated imports in get_quant_method
+        # This saves runtime on every call, especially important under profiling
+        from sglang.srt.layers.linear import LinearBase
+        self._linear_base_type = LinearBase
+
     def __repr__(self) -> str:
         return "QoQConfig(weight_bits={}, group_size={})".format(
             self.weight_bits, self.group_size
@@ -94,9 +99,8 @@ class QoQConfig(QuantizationConfig):
         layer: torch.nn.Module,
         prefix: str,
     ) -> Optional[QuantizeMethodBase]:
-        from sglang.srt.layers.linear import LinearBase
-
-        if isinstance(layer, LinearBase):
+        # Use cached LinearBase type for fast isinstance
+        if isinstance(layer, self._linear_base_type):
             return QoQLinearMethod(self)
         return None
 
