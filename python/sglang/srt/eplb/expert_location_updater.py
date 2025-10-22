@@ -518,10 +518,17 @@ class _ChunkUtils:
 
 
 def _deduplicate_ordered(arr: List[int]):
+    # Local variable for output length check is avoided for branch prediction
     output = []
-    for item in arr:
-        if len(output) == 0 or item != output[-1]:
-            output.append(item)
+    if not arr:
+        return output
+    output_append = output.append  # Micro-optimization: localize method for innermost loop
+    last_item = arr[0]
+    output_append(last_item)
+    for item in arr[1:]:
+        if item != last_item:
+            output_append(item)
+            last_item = item
     return output
 
 
