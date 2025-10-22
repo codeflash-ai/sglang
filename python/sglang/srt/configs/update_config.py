@@ -42,10 +42,9 @@ def get_moe_padding_size(weight_block_size):
 
 
 def get_num_heads_padding_size(tp_size, weight_block_size):
-    pad_size = (
-        tp_size * 2 if tp_size % 2 == 1 and weight_block_size is not None else tp_size
-    )
-    return pad_size
+    if weight_block_size is not None and tp_size % 2 == 1:
+        return tp_size * 2
+    return tp_size
 
 
 def update_intermediate_size(model_config, attr_name, intermediate_padding_size):
