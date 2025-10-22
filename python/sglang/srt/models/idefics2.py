@@ -216,22 +216,40 @@ class Idefics2VisionEmbeddings(nn.Module):
             max_im_w // self.patch_size,
         )
         boundaries = torch.arange(
-            1 / self.num_patches_per_side, 1.0, 1 / self.num_patches_per_side
+            1 / self.num_patches_per_side, 1.0, 1 / self.num_patches_per_side,
+            device=pixel_values.device if pixel_values.is_cuda else None
         )
         position_ids = torch.full(
-            size=(batch_size, max_nb_patches_h * max_nb_patches_w), fill_value=0
+            size=(batch_size, max_nb_patches_h * max_nb_patches_w), fill_value=0,
+            device=pixel_values.device, dtype=torch.long
         )
 
-        for batch_idx, p_attn_mask in enumerate(patch_attention_mask):
+        # Collect in advance to avoid repeated device/cpu transfers
+        p_attn_masks_flat_cpu = [pam.view(-1).cpu() for pam in patch_attention_mask]
 
-            if tgt_sizes is not None:
-                nb_patches_h = tgt_sizes[batch_idx][0]
-                nb_patches_w = tgt_sizes[batch_idx][1]
+        # Precompute target sizes if available
+        if tgt_sizes is not None:
+            tgt_sizes_cpu = tgt_sizes.cpu()
+        else:
+            tgt_sizes_cpu = None
+
+        for batch_idx in range(batch_size):
+
+            if tgt_sizes_cpu is not None:
+                nb_patches_h = tgt_sizes_cpu[batch_idx][0].item()
+                nb_patches_w = tgt_sizes_cpu[batch_idx][1].item()
             else:
-                nb_patches_h = p_attn_mask[:, 0].sum()
-                nb_patches_w = p_attn_mask[0].sum()
-            fractional_coords_h = torch.arange(0, 1 - 1e-6, 1 / nb_patches_h)
-            fractional_coords_w = torch.arange(0, 1 - 1e-6, 1 / nb_patches_w)
+                pam = patch_attention_mask[batch_idx]
+                nb_patches_h = pam[:, 0].sum().item()
+                nb_patches_w = pam[0].sum().item()
+            # Avoid torch.arange errors if nb_patches_* == 0
+            if nb_patches_h == 0 or nb_patches_w == 0:
+                continue
+            # Precompute on correct device directly
+            fractional_coords_h = torch.arange(0, 1 - 1e-6, 1 / nb_patches_h,
+                                              device=boundaries.device)
+            fractional_coords_w = torch.arange(0, 1 - 1e-6, 1 / nb_patches_w,
+                                              device=boundaries.device)
             bucket_coords_h = torch.bucketize(
                 fractional_coords_h, boundaries, right=True
             )
@@ -241,7 +259,7 @@ class Idefics2VisionEmbeddings(nn.Module):
             pos_ids = (
                 bucket_coords_h[:, None] * self.num_patches_per_side + bucket_coords_w
             ).flatten()
-            position_ids[batch_idx][p_attn_mask.view(-1).cpu()] = pos_ids
+            position_ids[batch_idx][p_attn_masks_flat_cpu[batch_idx]] = pos_ids
         position_ids = position_ids.to(self.position_embedding.weight.device)
         return position_ids
 
@@ -251,16 +269,17 @@ class Idefics2VisionEmbeddings(nn.Module):
         patch_attention_mask: torch.BoolTensor,
         tgt_sizes: Optional[torch.IntTensor] = None,
     ) -> torch.Tensor:
-        target_dtype = self.patch_embedding.weight.dtype
-        pixel_values = pixel_values.to(
-            device=self.patch_embedding.weight.device, dtype=target_dtype
-        )
+        # Move pixel_values to patch_embedding weights' device and dtype in one step
+        target_weight = self.patch_embedding.weight
+        device = target_weight.device
+        dtype = target_weight.dtype
+        if pixel_values.device != device or pixel_values.dtype != dtype:
+            pixel_values = pixel_values.to(device=device, dtype=dtype)
         patch_embeds = self.patch_embedding(pixel_values)
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
         position_ids = self.get_position_ids(
             pixel_values, patch_attention_mask, tgt_sizes
         )
-
         embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings
 
