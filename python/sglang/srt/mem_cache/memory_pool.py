@@ -227,6 +227,7 @@ class MambaPool:
             self.free_slots = torch.arange(
                 self.size, dtype=torch.int64, device=self.device
             )
+            self._free_size = self.size
             self.mem_usage = self.mamba_cache.mem_usage_bytes() / GB
             self.num_mamba_layers = num_mamba_layers
 
@@ -238,7 +239,7 @@ class MambaPool:
         return self.mamba_cache.at_layer_idx(layer_id)
 
     def available_size(self):
-        return len(self.free_slots)
+        return self._free_size
 
     def alloc(self, need_size: int) -> Optional[torch.Tensor]:
         if need_size > len(self.free_slots):
