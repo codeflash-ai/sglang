@@ -2272,7 +2272,10 @@ def set_cuda_arch():
 
 
 def next_power_of_2(n: int):
-    return 1 << (n - 1).bit_length() if n > 0 else 1
+    # Fast bitwise method; handles n=0 and n=1 correctly.
+    if n <= 0:
+        return 1
+    return 1 << ((n - 1).bit_length())
 
 
 def round_up(x: int, y: int) -> int:
