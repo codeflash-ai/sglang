@@ -74,8 +74,10 @@ import psutil
 import pybase64
 import requests
 import torch
+import torch._custom_op.impl
 import torch.distributed
 import torch.distributed as dist
+import torch.library
 import triton
 import zmq
 from fastapi.responses import ORJSONResponse
@@ -228,7 +230,6 @@ def support_triton(backend: str) -> bool:
 
 
 try:
-    import sgl_kernel
 
     is_intel_amx_backend_available = hasattr(
         torch.ops.sgl_kernel, "convert_weight_packed"
@@ -1556,7 +1557,6 @@ def get_hpu_memory_capacity():
 
 def get_npu_memory_capacity():
     try:
-        import torch_npu
 
         return torch.npu.mem_get_info()[1] // 1024 // 1024  # unit: MB
     except ImportError as e:
@@ -1743,7 +1743,6 @@ def get_device(device_id: Optional[int] = None) -> str:
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
                 if device_id == None:
@@ -1773,7 +1772,6 @@ def get_device_count() -> int:
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
                 return torch.hpu.device_count()
