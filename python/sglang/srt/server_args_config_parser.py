@@ -115,13 +115,25 @@ class ConfigArgumentMerger:
         """Convert configuration dictionary to argument list."""
         args = []
 
+        ba_set = set(self.boolean_actions) if self.boolean_actions else None
+        ext = args.extend
+        app = args.append
+
         for key, value in config.items():
             if isinstance(value, bool):
-                self._add_boolean_arg(args, key, value)
+                if ba_set is not None and key in ba_set:
+                    # For boolean actions, always add the flag and value
+                    ext([f"--{key}", str(value).lower()])
+                else:
+                    # For regular booleans, only add flag if True
+                    if value:
+                        app(f"--{key}")
             elif isinstance(value, list):
-                self._add_list_arg(args, key, value)
+                if value:  # Only add if list is not empty
+                    app(f"--{key}")
+                    ext(map(str, value))
             else:
-                self._add_scalar_arg(args, key, value)
+                ext([f"--{key}", str(value)])
 
         return args
 
