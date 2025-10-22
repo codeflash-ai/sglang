@@ -68,6 +68,8 @@ _is_mxfp_supported = mxfp_supported()
 if TYPE_CHECKING:
     from sglang.srt.layers.moe.topk import TopKOutput
 
+_AVAILABLE_METHODS_LIST = None
+
 # Base quantization methods that don't depend on vllm
 BASE_QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     "fp8": Fp8Config,
@@ -122,11 +124,18 @@ QUANTIZATION_METHODS = {**BASE_QUANTIZATION_METHODS, **VLLM_QUANTIZATION_METHODS
 
 
 def get_quantization_config(quantization: str) -> Type[QuantizationConfig]:
+    # Fast path: avoid list conversion on every error
+    global _AVAILABLE_METHODS_LIST
     if quantization not in QUANTIZATION_METHODS:
+        if _AVAILABLE_METHODS_LIST is None:
+            _AVAILABLE_METHODS_LIST = list(QUANTIZATION_METHODS.keys())
+        # The list is now cached for future calls
         raise ValueError(
             f"Invalid quantization method: {quantization}. "
-            f"Available methods: {list(QUANTIZATION_METHODS.keys())}"
+            f"Available methods: {_AVAILABLE_METHODS_LIST}"
         )
+    # Use set for faster 'in' checks if VLLM_QUANTIZATION_METHODS is large
+    # (But inlining as a local for performance is unnecessary here as the set is small/static)
     if quantization in VLLM_QUANTIZATION_METHODS and not VLLM_AVAILABLE:
         raise ValueError(
             f"{quantization} quantization requires some operators from vllm. "
