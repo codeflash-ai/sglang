@@ -505,7 +505,11 @@ class SglGen(SglExpr):
         )
 
     def __repr__(self):
-        return f"Gen('{self.name}')"
+        # Avoid f-string overhead for simple formatting
+        name = self.name
+        if name is None:
+            return "Gen('None')"
+        return "Gen('" + str(name) + "')"
 
 
 class SglConstantText(SglExpr):
