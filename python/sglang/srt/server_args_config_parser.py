@@ -44,15 +44,16 @@ class ConfigArgumentMerger:
 
     def _extract_config_file_path(self, args: List[str]) -> str:
         """Extract the config file path from arguments."""
-        config_indices = [i for i, arg in enumerate(args) if arg == "--config"]
-
-        if len(config_indices) > 1:
-            raise ValueError("Multiple config files specified! Only one allowed.")
-
-        if not config_indices:
+        try:
+            # Find the first occurrence of "--config"
+            config_index = args.index("--config")
+        except ValueError:
             return None
 
-        config_index = config_indices[0]
+        # Check for multiple occurrences of "--config" flag
+        if args.count("--config") > 1:
+            raise ValueError("Multiple config files specified! Only one allowed.")
+
         if config_index == len(args) - 1:
             raise ValueError("No config file specified after --config flag!")
 
