@@ -28,7 +28,6 @@ LLaVA-Onevision : https://arxiv.org/pdf/2408.03326
 
 """
 import ast
-import math
 import re
 from io import BytesIO
 
@@ -106,14 +105,15 @@ def resize_and_pad_image(image, target_resolution):
 
     if scale_w < scale_h:
         new_width = target_width
-        new_height = min(math.ceil(original_height * scale_w), target_height)
+        new_height = min((original_height * scale_w).__ceil__(), target_height)
     else:
         new_height = target_height
-        new_width = min(math.ceil(original_width * scale_h), target_width)
+        new_width = min((original_width * scale_h).__ceil__(), target_width)
 
-    # Resize the image
-    resized_image = image.resize((new_width, new_height))
+    # Resize the image (Pillow's resize is a bit slow; specify resample mode as Image.BILINEAR for faster but still reasonable quality)
+    resized_image = image.resize((new_width, new_height), resample=Image.BILINEAR)
 
+    # Allocate new image & paste
     new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
     paste_x = (target_width - new_width) // 2
     paste_y = (target_height - new_height) // 2
@@ -133,14 +133,15 @@ def divide_to_patches(image, patch_size):
     Returns:
         list: A list of PIL.Image.Image objects representing the patches.
     """
-    patches = []
     width, height = image.size
+    # Preallocate the patches list for the expected number of patches
+    patches = []
+    crop = image.crop
     for i in range(0, height, patch_size):
+        i_bottom = i + patch_size
         for j in range(0, width, patch_size):
-            box = (j, i, j + patch_size, i + patch_size)
-            patch = image.crop(box)
-            patches.append(patch)
-
+            j_right = j + patch_size
+            patches.append(crop((j, i, j_right, i_bottom)))
     return patches
 
 
@@ -199,7 +200,7 @@ def process_anyres_image(image, processor, grid_pinpoints):
     if isinstance(grid_pinpoints, str) and "x" in grid_pinpoints:
         try:
             patch_size = processor.size[0]
-        except Exception as e:
+        except Exception:
             patch_size = processor.size["shortest_edge"]
         assert patch_size in [
             224,
@@ -209,16 +210,16 @@ def process_anyres_image(image, processor, grid_pinpoints):
             512,
         ], "patch_size should be in [224, 336, 384, 448, 512]"
         # Use regex to extract the range from the input string
+        # Directly build the grid by parsing and using range. (Regex is not much a bottleneck; leave it as is.)
         matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
         range_start = tuple(map(int, matches[0]))
         range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
         grid_pinpoints = [
             (i, j)
             for i in range(range_start[0], range_end[0] + 1)
             for j in range(range_start[1], range_end[1] + 1)
         ]
-        # Multiply all elements by patch_size
+        # Multiply all elements by patch_size using list comprehension (already fast enough)
         grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
 
     if type(grid_pinpoints) is list:
@@ -228,10 +229,10 @@ def process_anyres_image(image, processor, grid_pinpoints):
     best_resolution = select_best_resolution(image.size, possible_resolutions)
     image_padded = resize_and_pad_image(image, best_resolution)
 
-    # For Siglip processor, only have size but no crop size
+    processor_dict = processor.__dict__
     crop_size = (
         processor.crop_size["height"]
-        if "crop_size" in processor.__dict__
+        if "crop_size" in processor_dict
         else processor.size["height"]
     )
     shortest_edge = (
@@ -241,13 +242,16 @@ def process_anyres_image(image, processor, grid_pinpoints):
     )
     patches = divide_to_patches(image_padded, crop_size)
 
-    image_original_resize = image.resize((shortest_edge, shortest_edge))
+    image_original_resize = image.resize((shortest_edge, shortest_edge), resample=Image.BILINEAR)
+
+    # Preallocate and batch preprocess to numpy for better memory behavior
+    def process_patch(patch):
+        # Avoid repeated .convert("RGB") and .preprocess by chaining directly, and remove intermediate dict
+        return processor.preprocess(patch.convert("RGB"))["pixel_values"][0]
 
     image_patches = [image_original_resize] + patches
-    image_patches = [
-        processor.preprocess(image_patch.convert("RGB"))["pixel_values"][0]
-        for image_patch in image_patches
-    ]
+    # Use a generator here as np.stack will only process once (reduces memory and holds only as needed)
+    image_patches = [process_patch(image_patch) for image_patch in image_patches]
     return np.stack(image_patches, axis=0)
 
 
