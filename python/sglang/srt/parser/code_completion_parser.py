@@ -70,7 +70,6 @@ def completion_template_exists(template_name: str) -> bool:
 
 
 def is_completion_template_defined() -> bool:
-    global completion_template_name
     return completion_template_name is not None
 
 
