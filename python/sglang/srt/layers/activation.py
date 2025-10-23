@@ -380,4 +380,14 @@ if not (
     logger.info(
         "sgl-kernel is not available on Non-NV, Non-AMD platforms or Non-AMX CPUs. Fallback to other kernel libraries."
     )
-    from vllm.model_executor.layers.activation import GeluAndMul, SiluAndMul
+    try:
+        from vllm.model_executor.layers.activation import GeluAndMul, SiluAndMul
+    except ImportError:
+
+        class GeluAndMul:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        class SiluAndMul:
+            def __init__(self, *args, **kwargs):
+                pass
