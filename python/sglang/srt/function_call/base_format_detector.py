@@ -63,9 +63,12 @@ class BaseFormatDetector(ABC):
         Returns:
             Dictionary mapping tool names to their indices
         """
-        return {
-            tool.function.name: i for i, tool in enumerate(tools) if tool.function.name
-        }
+        result: Dict[str, int] = {}
+        for i, tool in enumerate(tools):
+            name = tool.function.name
+            if name:
+                result[name] = i
+        return result
 
     def parse_base_json(self, action: Any, tools: List[Tool]) -> List[ToolCallItem]:
         tool_indices = self._get_tool_indices(tools)
