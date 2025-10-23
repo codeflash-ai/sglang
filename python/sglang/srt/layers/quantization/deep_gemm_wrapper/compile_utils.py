@@ -146,11 +146,15 @@ def _compile_deep_gemm_one_type_all(
 class _BaseWarmupExecutor:
     @staticmethod
     def create(kernel_type: DeepGemmKernelType, **kwargs):
-        return {
-            DeepGemmKernelType.GEMM_NT_F8F8BF16: _NormalWarmupExecutor,
-            DeepGemmKernelType.GROUPED_GEMM_NT_F8F8BF16_CONTIG: _GroupedContWarmupExecutor,
-            DeepGemmKernelType.GROUPED_GEMM_NT_F8F8BF16_MASKED: _GroupedMaskedWarmupExecutor,
-        }[kernel_type](**kwargs)
+        # Optimize dict lookup by storing the mapping in a class attribute
+        # This avoids rebuilding the dict on every call
+        if not hasattr(_BaseWarmupExecutor, '_KERNEL_FACTORY'):
+            _BaseWarmupExecutor._KERNEL_FACTORY = {
+                DeepGemmKernelType.GEMM_NT_F8F8BF16: _NormalWarmupExecutor,
+                DeepGemmKernelType.GROUPED_GEMM_NT_F8F8BF16_CONTIG: _GroupedContWarmupExecutor,
+                DeepGemmKernelType.GROUPED_GEMM_NT_F8F8BF16_MASKED: _GroupedMaskedWarmupExecutor,
+            }
+        return _BaseWarmupExecutor._KERNEL_FACTORY[kernel_type](**kwargs)
 
     def execute(self, m):
         raise NotImplementedError
