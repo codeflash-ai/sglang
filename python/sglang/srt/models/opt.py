@@ -51,6 +51,14 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.utils import add_prefix, make_layers
 
+_relu = nn.ReLU()
+
+_gelu = nn.GELU()
+
+_sigmoid = nn.Sigmoid()
+
+_identity = nn.Identity()
+
 
 def get_activation(name="relu"):
     """Select an activation function by name
@@ -63,12 +71,12 @@ def get_activation(name="relu"):
     """
     name = name.lower()
     if name == "relu":
-        return nn.ReLU()
+        return _relu
     if name == "gelu":
-        return nn.GELU()
+        return _gelu
     if name == "sigmoid":
-        return torch.nn.Sigmoid()
-    return nn.Identity()
+        return _sigmoid
+    return _identity
 
 
 class OPTLearnedPositionalEmbedding(nn.Embedding):
