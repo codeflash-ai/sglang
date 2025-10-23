@@ -5,6 +5,7 @@ import resource
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from multiprocessing.pool import ThreadPool
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -437,7 +438,7 @@ def make_report_from_example_htmls(htmls: List[str]):
     """
     Create a standalone HTML report from a list of example htmls
     """
-    return jinja_env.from_string(_report_template).render(
+    return _get_compiled_report_template().render(
         score=None, metrics={}, htmls=htmls
     )
 
@@ -476,3 +477,8 @@ def set_ulimit(target_soft_limit=65535):
             resource.setrlimit(resource_type, (target_soft_limit, current_hard))
         except ValueError as e:
             print(f"Fail to set RLIMIT_NOFILE: {e}")
+
+
+@lru_cache(maxsize=1)
+def _get_compiled_report_template():
+    return jinja_env.from_string(_report_template)
