@@ -426,7 +426,9 @@ def make_report(eval_result: EvalResult) -> str:
     """
     Create a standalone HTML report from an EvalResult.
     """
-    return jinja_env.from_string(_report_template).render(
+    if not hasattr(make_report, "_compiled_template"):
+        make_report._compiled_template = jinja_env.from_string(_report_template)
+    return make_report._compiled_template.render(
         score=eval_result.score,
         metrics=eval_result.metrics,
         htmls=eval_result.htmls,
