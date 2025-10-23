@@ -14,7 +14,7 @@ import traceback
 import urllib.request
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from functools import wraps
+from functools import lru_cache, wraps
 from io import BytesIO
 from json import dumps
 from typing import Any, Callable, List, Optional, Tuple, Type, Union
@@ -542,6 +542,7 @@ async def async_stream_and_merge(llm, prompt, sampling_params):
         yield cleaned_chunk  # yield the non-overlapping portion
 
 
+@lru_cache(maxsize=128)
 def resolve_obj_by_qualname(qualname: str) -> Any:
     """
     Resolve an object by its fully qualified name.
