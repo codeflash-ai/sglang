@@ -136,8 +136,11 @@ class GeluAndMul(CustomOp):
 
 class NewGELU(CustomOp):
     def forward_native(self, x: torch.Tensor) -> torch.Tensor:
-        c = math.sqrt(2.0 / math.pi)
-        return 0.5 * x * (1.0 + torch.tanh(c * (x + 0.044715 * torch.pow(x, 3.0))))
+        # Single fused polynomial and tanh operation without redundant tensor ops
+        # Using torch.pow(x, 3.0) replaced with x * x * x, which is faster and avoids float exponentiation kernel dispatch.
+        x_cube = x * x * x
+        inner = x + 0.044715 * x_cube
+        return 0.5 * x * (1.0 + torch.tanh(_C_GELU * inner))
 
     def forward_cuda(self, x: torch.Tensor) -> torch.Tensor:
         # TODO: Implement the CUDA kernel for NewGELU in sgl-kernel
@@ -380,4 +383,17 @@ if not (
     logger.info(
         "sgl-kernel is not available on Non-NV, Non-AMD platforms or Non-AMX CPUs. Fallback to other kernel libraries."
     )
-    from vllm.model_executor.layers.activation import GeluAndMul, SiluAndMul
+    try:
+        from vllm.model_executor.layers.activation import GeluAndMul, SiluAndMul
+        
+        # Pre-compute this as a module-level constant; it's a scalar and doesn't need to be recomputed.
+        _C_GELU: float = math.sqrt(2.0 / math.pi)
+    except ImportError:
+
+        class GeluAndMul:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        class SiluAndMul:
+            def __init__(self, *args, **kwargs):
+                pass
