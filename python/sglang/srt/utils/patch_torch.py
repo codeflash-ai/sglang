@@ -77,7 +77,8 @@ def _device_from_maybe_uuid(device_maybe_uuid: Union[int, str]) -> int:
 
 
 def _modify_tuple(t, index: int, modifier: Callable):
-    return *t[:index], modifier(t[index]), *t[index + 1 :]
+    # Use tuple concatenation for better performance than unpacking
+    return t[:index] + (modifier(t[index]),) + t[index + 1 :]
 
 
 def monkey_patch_torch_compile():
