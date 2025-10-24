@@ -65,16 +65,16 @@ class ReqToMetadataIdxAllocator:
         size: int,
     ):
         self.size = size
-        self.free_slots = deque(list(range(size)))
+        self.free_slots = deque(range(size))  # Directly pass the range, no need for list()
 
     def available_size(self):
         return len(self.free_slots)
 
     def alloc(self) -> Optional[int]:
-        if len(self.free_slots) == 0:
+        try:
+            return self.free_slots.popleft()
+        except IndexError:
             return None
-
-        return self.free_slots.popleft()
 
     def free(self, free_index: int):
         self.free_slots.append(free_index)
