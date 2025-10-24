@@ -16,6 +16,8 @@ from sglang.srt.mem_cache.memory_pool import ReqToTokenPool
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req
 
+_EMPTY_INT64_TENSOR = torch.empty((0,), dtype=torch.int64)
+
 
 class ChunkCache(BasePrefixCache):
     def __init__(
@@ -44,7 +46,7 @@ class ChunkCache(BasePrefixCache):
 
     def match_prefix(self, **unused_kwargs) -> MatchResult:
         return MatchResult(
-            device_indices=torch.empty((0,), dtype=torch.int64),
+            device_indices=_EMPTY_INT64_TENSOR,
             last_device_node=None,
             last_host_node=None,
         )
