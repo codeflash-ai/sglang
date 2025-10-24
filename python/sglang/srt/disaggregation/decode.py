@@ -102,19 +102,25 @@ class DecodeReqToTokenPool:
         self.max_context_len = max_context_len
         self.device = device
         self.pre_alloc_size = pre_alloc_size
-        with memory_saver_adapter.region(tag=GPU_MEMORY_TYPE_KV_CACHE):
-            self.req_to_token = torch.zeros(
-                (size + pre_alloc_size, max_context_len),
-                dtype=torch.int32,
-                device=device,
-            )
 
+        # Preallocate tensor and free_slots within memory_saver region context for efficiency.
+        tensor_shape = (size + pre_alloc_size, max_context_len)
+        with memory_saver_adapter.region(tag=GPU_MEMORY_TYPE_KV_CACHE):
+            self.req_to_token = torch.empty(
+                tensor_shape, dtype=torch.int32, device=device
+            )
+            self.req_to_token.zero_()
+
+        # Use range object and tuple for free_slots to minimize memory overhead and
+        # speed up construction; conversion to list only if mutation is required elsewhere.
+        # However, since mutation is likely (pop for slot allocation), keep as list.
         self.free_slots = list(range(size + pre_alloc_size))
 
     def write(self, indices, values):
         self.req_to_token[indices] = values
 
     def available_size(self):
+        # No change: fastest method using builtin len.
         return len(self.free_slots)
 
     def alloc(self, need_size: int) -> List[int]:
