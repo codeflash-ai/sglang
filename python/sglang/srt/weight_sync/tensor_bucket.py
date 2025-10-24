@@ -14,6 +14,23 @@ class FlattenedTensorMetadata:
     start_idx: int
     end_idx: int
     numel: int
+    # Assuming definition is provided elsewhere in the codebase
+    # Placeholder for type checking
+    def __init__(
+        self,
+        name: str,
+        shape,
+        dtype,
+        start_idx: int,
+        end_idx: int,
+        numel: int,
+    ):
+        self.name = name
+        self.shape = shape
+        self.dtype = dtype
+        self.start_idx = start_idx
+        self.end_idx = end_idx
+        self.numel = numel
 
 
 class FlattenedTensorBucket:
@@ -26,7 +43,7 @@ class FlattenedTensorBucket:
         self,
         named_tensors: List[Tuple[str, torch.Tensor]] = None,
         flattened_tensor: torch.Tensor = None,
-        metadata: List[FlattenedTensorMetadata] = None,
+        metadata: List['FlattenedTensorMetadata'] = None,
     ):
         """
         Initialize a tensor bucket from a list of named tensors OR from pre-flattened data.
@@ -37,36 +54,71 @@ class FlattenedTensorBucket:
         """
         if named_tensors is not None:
             # Create bucket from named tensors
-            self.metadata: List[FlattenedTensorMetadata] = [None] * len(named_tensors)
-            self.flattened_tensor: torch.Tensor = None
-
             if not named_tensors:
                 raise ValueError("Cannot create empty tensor bucket")
 
-            # Collect metadata and flatten tensors
+            num_tensors = len(named_tensors)
+            self.metadata: List[FlattenedTensorMetadata] = [None] * num_tensors
+            flattened_tensors = []
             current_idx = 0
-            flattened_tensors: List[torch.Tensor] = [None] * len(named_tensors)
 
-            for i, (name, tensor) in enumerate(named_tensors):
-                flattened = tensor.flatten()
-                flattened_tensors[i] = flattened
+            # Precompute total numel and use it to streamline cat/op allocation
+            total_numel = 0
+            for _, tensor in named_tensors:
+                total_numel += tensor.numel()
 
-                # Store metadata
+            # Preallocate output Tensor on the appropriate device/dtype if everything is consistent
+            # This block attempts to avoid multiple small allocations and use slicing
+            # Only if all tensors are of the same dtype and device
+            # Otherwise, default to original logic
+            all_same_dtype = True
+            all_same_device = True
+            ref_dtype = named_tensors[0][1].dtype
+            ref_device = named_tensors[0][1].device
+            for _, tensor in named_tensors:
+                if tensor.dtype != ref_dtype:
+                    all_same_dtype = False
+                if tensor.device != ref_device:
+                    all_same_device = False
 
-                numel = flattened.numel()
-                metadata_obj = FlattenedTensorMetadata(
-                    name=name,
-                    shape=tensor.shape,
-                    dtype=tensor.dtype,
-                    start_idx=current_idx,
-                    end_idx=current_idx + numel,
-                    numel=numel,
-                )
-                self.metadata[i] = metadata_obj
-                current_idx += numel
+            fast_path = all_same_dtype and all_same_device
 
-            # Concatenate all flattened tensors
-            self.flattened_tensor = torch.cat(flattened_tensors, dim=0)
+            if fast_path and num_tensors > 1:
+                out = torch.empty(total_numel, dtype=ref_dtype, device=ref_device)
+                for i, (name, tensor) in enumerate(named_tensors):
+                    numel = tensor.numel()
+                    flat_tensor = tensor.flatten()
+                    # Write in-place
+                    out[current_idx : current_idx + numel] = flat_tensor
+                    self.metadata[i] = FlattenedTensorMetadata(
+                        name=name,
+                        shape=tensor.shape,
+                        dtype=tensor.dtype,
+                        start_idx=current_idx,
+                        end_idx=current_idx + numel,
+                        numel=numel,
+                    )
+                    current_idx += numel
+                self.flattened_tensor = out
+            else:
+                flattened_tensors = []
+                for i, (name, tensor) in enumerate(named_tensors):
+                    flat = tensor.flatten()
+                    flattened_tensors.append(flat)
+                    numel = flat.numel()
+                    self.metadata[i] = FlattenedTensorMetadata(
+                        name=name,
+                        shape=tensor.shape,
+                        dtype=tensor.dtype,
+                        start_idx=current_idx,
+                        end_idx=current_idx + numel,
+                        numel=numel,
+                    )
+                    current_idx += numel
+                if num_tensors == 1:
+                    self.flattened_tensor = flattened_tensors[0]
+                else:
+                    self.flattened_tensor = torch.cat(flattened_tensors, dim=0)
         else:
             # Initialize from pre-flattened data
             if flattened_tensor is None or metadata is None:
