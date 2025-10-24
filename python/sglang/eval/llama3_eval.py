@@ -16,6 +16,13 @@ from datasets import load_dataset
 from openai import AsyncOpenAI
 from tqdm import tqdm
 
+_patterns = [
+    re.compile(r"The best answer is (.+)\.?"),
+    re.compile(r"the best answer is (.+)\.?"),
+    re.compile(r"The correct answer is (.+)\.?"),
+    re.compile(r"the correct answer is (.+)\.?"),
+]
+
 # Mapping providers to their clients and models
 provider_to_models = {
     "b10": {
@@ -148,23 +155,17 @@ def get_mmlu_answer(response):
 
 
 def get_mmlu_cot_answer(response):
-    pattern = r"The best answer is (.+)\.?"
-    match = re.search(pattern, response.choices[0].text)
+    text = response.choices[0].text
+    match = _patterns[0].search(text)
     if match:
         return match.group(1).replace(".", "").replace("*", "")
-
-    pattern = r"the best answer is (.+)\.?"
-    match = re.search(pattern, response.choices[0].text)
+    match = _patterns[1].search(text)
     if match:
         return match.group(1).replace(".", "")
-
-    pattern = r"The correct answer is (.+)\.?"
-    match = re.search(pattern, response.choices[0].text)
+    match = _patterns[2].search(text)
     if match:
         return match.group(1).replace(".", "")
-
-    pattern = r"the correct answer is (.+)\.?"
-    match = re.search(pattern, response.choices[0].text)
+    match = _patterns[3].search(text)
     if match:
         return match.group(1).replace(".", "")
 
