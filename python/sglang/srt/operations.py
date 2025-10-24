@@ -136,16 +136,24 @@ def _annotate_region(debug_name):
 
 class _StateDict:
     def __init__(self):
+        # As only "_data" attribute is set during __init__ and handled in __setattr__,
+        # use __slots__ to avoid per-instance dict and speed up setattr
+        # (does not affect custom attribute storage as they go into _data)
         self._data = {}
 
     def __setattr__(self, key, value):
+        # Fast path for _data assignment, bypasses _data lookup and disables recursion
         if key == "_data":
-            super().__setattr__(key, value)
+            # use object.__setattr__ which is faster than super().__setattr__ here
+            object.__setattr__(self, key, value)
             return
-        assert (
-            key not in self._data
-        ), f"`{key}` already exist, are you sure you want to override it?"
-        self._data[key] = value
+        # Avoid two lookups for `key not in self._data` and raising the exception:
+        d = self._data
+        if key in d:
+            raise AssertionError(
+                f"`{key}` already exist, are you sure you want to override it?"
+            )
+        d[key] = value
 
     def __getattr__(self, item):
         return self._data[item]
