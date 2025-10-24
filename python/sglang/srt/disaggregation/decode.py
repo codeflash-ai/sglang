@@ -920,12 +920,16 @@ class SchedulerDisaggregationDecodeMixin:
             self.last_batch_in_queue = last_batch_in_queue
 
     def _prepare_idle_batch_and_run(self: Scheduler, batch, delay_process=False):
+        if not batch:
+            return batch, None
+
         batch = self.prepare_mlp_sync_batch(batch)
-        result = None
-        if batch:
-            result = self.run_batch(batch)
-            if not delay_process:
-                self.process_batch_result(batch, result)
+        if not batch:
+            return batch, None
+
+        result = self.run_batch(batch)
+        if not delay_process:
+            self.process_batch_result(batch, result)
         return batch, result
 
     def get_next_disagg_decode_batch_to_run(
