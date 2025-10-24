@@ -20,18 +20,26 @@ class UsageProcessor:
         n_choices: int = 1,
         enable_cache_report: bool = False,
     ) -> UsageInfo:
-        completion_tokens = sum(r["meta_info"]["completion_tokens"] for r in responses)
-
-        prompt_tokens = sum(
-            responses[i]["meta_info"]["prompt_tokens"]
-            for i in range(0, len(responses), n_choices)
-        )
+        completion_tokens = 0
+        prompt_tokens = 0
+        
+        if n_choices == 1:
+            for r in responses:
+                meta_info = r["meta_info"]
+                completion_tokens += meta_info["completion_tokens"]
+                prompt_tokens += meta_info["prompt_tokens"]
+        else:
+            for r in responses:
+                completion_tokens += r["meta_info"]["completion_tokens"]
+            
+            for i in range(0, len(responses), n_choices):
+                prompt_tokens += responses[i]["meta_info"]["prompt_tokens"]
 
         cached_details = None
         if enable_cache_report:
-            cached_total = sum(
-                r["meta_info"].get("cached_tokens", 0) for r in responses
-            )
+            cached_total = 0
+            for r in responses:
+                cached_total += r["meta_info"].get("cached_tokens", 0)
             cached_details = UsageProcessor._details_if_cached(cached_total)
 
         return UsageProcessor.calculate_token_usage(
