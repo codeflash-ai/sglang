@@ -43,7 +43,7 @@ def to_fp8(tensor: torch.Tensor) -> torch.Tensor:
     """Converts tensor to FP8 E4M3, scaling values to fit the range."""
     finfo = torch.finfo(torch.float8_e4m3fn)
     # Calculate max absolute value safely
-    max_val = torch.max(torch.abs(tensor))
+    max_val = tensor.abs().amax()
     # Avoid division by zero if tensor is all zeros
     if max_val == 0:
         scale_factor = 1.0
@@ -55,9 +55,8 @@ def to_fp8(tensor: torch.Tensor) -> torch.Tensor:
     scaled_tensor = tensor * scale_factor
 
     # Clamp and convert
-    fp8_tensor = scaled_tensor.clamp(min=finfo.min, max=finfo.max).to(
-        dtype=torch.float8_e4m3fn
-    )
+    scaled_tensor.clamp_(min=finfo.min, max=finfo.max)
+    fp8_tensor = scaled_tensor.to(dtype=torch.float8_e4m3fn)
     return fp8_tensor
 
 
