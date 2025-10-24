@@ -98,20 +98,46 @@ def _mark_dynamic_on_value(val, dims):
 
 def _infer_dynamic_arg_dims_from_annotations(forward_fn):
     sig = inspect.signature(forward_fn)
+    parameters = sig.parameters.items()
     dyn = {}
-    for name, p in sig.parameters.items():
+
+    # Precompute commonly used names to avoid attribute lookups
+    INTERMEDIATE_NAME = "IntermediateTensors"
+    TENSOR_NAME = "Tensor"
+    TENSOR_TYPE = torch.Tensor
+
+    for name, p in parameters:
         ann = p.annotation
-        # Accept torch.Tensor / Optional[torch.Tensor] / your IntermediateTensors types by name
-        if (
-            ann is torch.Tensor
-            or getattr(getattr(ann, "__args__", [None])[0], "__name__", "") == "Tensor"
-        ):
+
+        # Short circuit exact torch.Tensor type
+        if ann is TENSOR_TYPE:
             dyn[name] = 0
-        elif getattr(ann, "__name__", "") in ("IntermediateTensors",) or any(
-            getattr(a, "__name__", "") == "IntermediateTensors"
-            for a in getattr(ann, "__args__", [])
-        ):
+            continue
+
+        # Avoid repeated getattr on __args__ by local variable
+        ann_args = getattr(ann, "__args__", None)
+
+        # Fast path for Optional[torch.Tensor] and similar (e.g., typing.Optional[torch.Tensor], Union[torch.Tensor, NoneType])
+        if ann_args:
+            first_arg = ann_args[0]
+            if getattr(first_arg, "__name__", "") == TENSOR_NAME:
+                dyn[name] = 0
+                continue
+
+        # Test IntermediateTensors direct annotation
+        ann_name = getattr(ann, "__name__", "")
+        if ann_name == INTERMEDIATE_NAME:
             dyn[name] = 0
+            continue
+
+        # Only check args if ann_args is not None/empty
+        if ann_args:
+            # Avoid unneeded function call to any() in most cases with a for-loop and break
+            for a in ann_args:
+                if getattr(a, "__name__", "") == INTERMEDIATE_NAME:
+                    dyn[name] = 0
+                    break
+
     if not dyn:
         raise ValueError("No dynamic dims inferred; pass dynamic_arg_dims explicitly.")
     return dyn
