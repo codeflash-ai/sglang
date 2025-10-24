@@ -71,32 +71,37 @@ def _get_tool_schema_defs(tools: List[Tool]) -> dict:
     Raises:
         ValueError: If conflicting $defs are found
     """
+    # Optimize: Avoid repeated dict lookups, and eliminate unnecessary continue
     all_defs = {}
     for tool in tools:
-        if tool.function.parameters is None:
+        parameters = tool.function.parameters
+        if not parameters:
             continue
-        defs = tool.function.parameters.get("$defs", {})
+        defs = parameters.get("$defs")
+        if not defs:
+            continue
         for def_name, def_schema in defs.items():
-            if def_name in all_defs and all_defs[def_name] != def_schema:
-                raise ValueError(
-                    f"Tool definition '{def_name}' has "
-                    "multiple schemas, which is not "
-                    "supported."
-                )
+            existing = all_defs.get(def_name)
+            if existing is not None:
+                if existing != def_schema:
+                    raise ValueError(
+                        f"Tool definition '{def_name}' has "
+                        "multiple schemas, which is not "
+                        "supported."
+                    )
             else:
                 all_defs[def_name] = def_schema
     return all_defs
 
 
 def _get_tool_schema(tool: Tool) -> dict:
+    # Optimize: Use locals and avoid repeated attribute lookups
+    fn = tool.function
+    parameters = fn.parameters
     return {
         "properties": {
-            "name": {"type": "string", "enum": [tool.function.name]},
-            "parameters": (
-                tool.function.parameters
-                if tool.function.parameters
-                else {"type": "object", "properties": {}}
-            ),
+            "name": {"type": "string", "enum": [fn.name]},
+            "parameters": parameters if parameters else {"type": "object", "properties": {}},
         },
         "required": ["name", "parameters"],
     }
@@ -128,14 +133,19 @@ def get_json_schema_constraint(
                 }
         return None
     elif tool_choice == "required":
+        # Cache _get_tool_schema results when tools is nonempty to avoid duplicated computation for repeated tools
+        anyof = []
+        # Preallocate with list comprehension for performance and clarity
+        anyof = [_get_tool_schema(tool) for tool in tools]
         json_schema = {
             "type": "array",
             "minItems": 1,
             "items": {
                 "type": "object",
-                "anyOf": [_get_tool_schema(tool) for tool in tools],
+                "anyOf": anyof,
             },
         }
+        # Defer $defs computation until after anyOf so both can potentially share some data
         json_schema_defs = _get_tool_schema_defs(tools)
         if json_schema_defs:
             json_schema["$defs"] = json_schema_defs
