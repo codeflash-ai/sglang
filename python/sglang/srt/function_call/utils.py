@@ -89,12 +89,13 @@ def _get_tool_schema_defs(tools: List[Tool]) -> dict:
 
 
 def _get_tool_schema(tool: Tool) -> dict:
+    function = tool.function
     return {
         "properties": {
-            "name": {"type": "string", "enum": [tool.function.name]},
+            "name": {"type": "string", "enum": [function.name]},
             "parameters": (
-                tool.function.parameters
-                if tool.function.parameters
+                function.parameters
+                if function.parameters
                 else {"type": "object", "properties": {}}
             ),
         },
