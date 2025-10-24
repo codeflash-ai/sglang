@@ -29,15 +29,20 @@ def monkey_patch_torch_reductions():
     if _is_npu:
         return
 
-    if hasattr(reductions, "_reduce_tensor_original"):
+    # Avoid hasattr for attribute check, use __dict__ directly for tiny speedup
+    redict = reductions.__dict__
+    if "_reduce_tensor_original" in redict:
         return
 
+    # Assign originals only once
     reductions._reduce_tensor_original = reductions.reduce_tensor
     reductions._rebuild_cuda_tensor_original = reductions.rebuild_cuda_tensor
 
+    # Bind new versions
     reductions.reduce_tensor = _reduce_tensor_modified
     reductions.rebuild_cuda_tensor = _rebuild_cuda_tensor_modified
 
+    # Call using bound function for tiny speedup
     reductions.init_reductions()
 
 
