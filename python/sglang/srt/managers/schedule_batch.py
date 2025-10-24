@@ -706,16 +706,28 @@ class Req:
 
         if first_iter:
             self.read_offset = len(self.origin_input_ids_unpadded)
-            self.surr_offset = max(
-                self.read_offset - INIT_INCREMENTAL_DETOKENIZATION_OFFSET, 0
-            )
-            self.surr_and_decode_ids = (
-                self.origin_input_ids_unpadded[self.surr_offset :] + self.output_ids
-            )
-            self.cur_decode_ids_len = len(self.output_ids)
+            # Compute surr_offset first since it's used in a slice immediately after,
+            # and minimize intermediate attribute access.
+            read_offset = self.read_offset
+            surr_offset = read_offset - INIT_INCREMENTAL_DETOKENIZATION_OFFSET
+            if surr_offset < 0:
+                surr_offset = 0
+            self.surr_offset = surr_offset
+
+            # Direct usage of slice instead of attribute lookup, for local variable
+            origin_input_ids_unpadded = self.origin_input_ids_unpadded
+            output_ids = self.output_ids
+            # Use list concatenation, avoids repeated attribute lookup.
+            surr_and_decode_ids = origin_input_ids_unpadded[surr_offset:] + output_ids
+            self.surr_and_decode_ids = surr_and_decode_ids
+            self.cur_decode_ids_len = len(output_ids)
         else:
-            self.surr_and_decode_ids.extend(self.output_ids[self.cur_decode_ids_len :])
-            self.cur_decode_ids_len = len(self.output_ids)
+            output_ids = self.output_ids
+            cur_decode_ids_len = self.cur_decode_ids_len
+            # The slice is potentially non-empty only if new tokens are produced;
+            # directly extend the list in-place.
+            self.surr_and_decode_ids.extend(output_ids[cur_decode_ids_len:])
+            self.cur_decode_ids_len = len(output_ids)
 
         return self.surr_and_decode_ids, self.read_offset - self.surr_offset
 
