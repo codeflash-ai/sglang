@@ -26,7 +26,7 @@ class FlattenedTensorBucket:
         self,
         named_tensors: List[Tuple[str, torch.Tensor]] = None,
         flattened_tensor: torch.Tensor = None,
-        metadata: List[FlattenedTensorMetadata] = None,
+        metadata: List['FlattenedTensorMetadata'] = None,  # quote type for annotation compatibility
     ):
         """
         Initialize a tensor bucket from a list of named tensors OR from pre-flattened data.
@@ -36,25 +36,23 @@ class FlattenedTensorBucket:
             metadata: Pre-computed metadata (for reconstruction)
         """
         if named_tensors is not None:
-            # Create bucket from named tensors
-            self.metadata: List[FlattenedTensorMetadata] = [None] * len(named_tensors)
-            self.flattened_tensor: torch.Tensor = None
-
             if not named_tensors:
                 raise ValueError("Cannot create empty tensor bucket")
 
-            # Collect metadata and flatten tensors
+            # Preallocate metadata and flattened tensor list
+            num_tensors = len(named_tensors)
+            self.metadata: List['FlattenedTensorMetadata'] = [None] * num_tensors
+
+            # Use a generator to avoid an intermediate list and unnecessary flatten
+            flattened_tensors_iter = (
+                tensor.flatten() for _, tensor in named_tensors
+            )
+            # Flatten all first and stash for efficient index computation
+            flattened_tensors = []
             current_idx = 0
-            flattened_tensors: List[torch.Tensor] = [None] * len(named_tensors)
-
-            for i, (name, tensor) in enumerate(named_tensors):
-                flattened = tensor.flatten()
-                flattened_tensors[i] = flattened
-
-                # Store metadata
-
-                numel = flattened.numel()
-                metadata_obj = FlattenedTensorMetadata(
+            for i, ((name, tensor), ft) in enumerate(zip(named_tensors, flattened_tensors_iter)):
+                numel = ft.numel()
+                self.metadata[i] = FlattenedTensorMetadata(
                     name=name,
                     shape=tensor.shape,
                     dtype=tensor.dtype,
@@ -62,11 +60,11 @@ class FlattenedTensorBucket:
                     end_idx=current_idx + numel,
                     numel=numel,
                 )
-                self.metadata[i] = metadata_obj
+                flattened_tensors.append(ft)
                 current_idx += numel
 
             # Concatenate all flattened tensors
-            self.flattened_tensor = torch.cat(flattened_tensors, dim=0)
+            self.flattened_tensor: torch.Tensor = torch.cat(flattened_tensors, dim=0)
         else:
             # Initialize from pre-flattened data
             if flattened_tensor is None or metadata is None:
