@@ -18,17 +18,26 @@ def organize_draft_results(
     parents_list: List[torch.Tensor],
     num_draft_token: int,
 ):
-    score_list = torch.cat(score_list, dim=1).flatten(1)
-    ss_token_list = torch.cat(token_list, dim=1)
+    if len(score_list) == 1:
+        score_list = score_list[0].flatten(1)
+    else:
+        score_list = torch.cat(score_list, dim=1).flatten(1)
+    
+    if len(token_list) == 1:
+        ss_token_list = token_list[0]
+    else:
+        ss_token_list = torch.cat(token_list, dim=1)
+    
     top_scores = torch.topk(score_list, num_draft_token - 1, dim=-1)
     top_scores_index = top_scores.indices
-    top_scores_index = torch.sort(top_scores_index).values
+    if num_draft_token - 1 > 1:
+        top_scores_index = torch.sort(top_scores_index).values
     draft_tokens = torch.gather(ss_token_list, index=top_scores_index, dim=1)
 
     if len(parents_list) > 1:
         parent_list = torch.cat(parents_list[:-1], dim=1)
     else:
-        batch_size = parents_list[0].shape[0]
+        batch_size = parents_list[0].size(0)
         parent_list = torch.empty(batch_size, 0, device=parents_list[0].device)
 
     return parent_list, top_scores_index, draft_tokens
