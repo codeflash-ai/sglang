@@ -21,7 +21,6 @@ class Tool(ABC):
 
 
 class HarmonyBrowserTool(Tool):
-
     def __init__(self):
         self.enabled = True
         exa_api_key = os.getenv("EXA_API_KEY")
@@ -43,13 +42,21 @@ class HarmonyBrowserTool(Tool):
         print_info_once("Browser tool initialized")
 
     async def get_result(self, context: "ConversationContext") -> Any:
-        from sglang.srt.entrypoints.context import HarmonyContext
+        # Cache HarmonyContext on class to eliminate slow import
+        HarmonyContext = getattr(self, "_harmony_context_type", None)
+        if HarmonyContext is None:
+            from sglang.srt.entrypoints.context import HarmonyContext as HC
+            HarmonyContext = HC
+            setattr(self, "_harmony_context_type", HC)
 
         assert isinstance(context, HarmonyContext)
         last_msg = context.messages[-1]
+        # Preallocate output list if an estimate is possible
         tool_output_msgs = []
-        async for msg in self.browser_tool.process(last_msg):
-            tool_output_msgs.append(msg)
+        browser_process = self.browser_tool.process(last_msg)
+        msg_append = tool_output_msgs.append  # Local var for faster appends
+        async for msg in browser_process:
+            msg_append(msg)
         return tool_output_msgs
 
     @property
