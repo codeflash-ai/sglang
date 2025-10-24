@@ -12,9 +12,12 @@ import torch
 import torch.distributed as dist
 
 from sglang.srt.utils import is_npu
+from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
 
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req
+
+MLATokenToKVPool = None
 
 #########################
 # Constants & Enums
@@ -340,9 +343,8 @@ def kv_to_page_num(num_kv_indices: int, page_size: int):
 
 
 def is_mla_backend(target_kv_pool) -> bool:
-    from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
-
-    return isinstance(target_kv_pool, MLATokenToKVPool)
+    # If the import failed, MLATokenToKVPool is None and isinstance will always return False
+    return MLATokenToKVPool is not None and isinstance(target_kv_pool, MLATokenToKVPool)
 
 
 def prepare_abort(req: Req, error_message: str, status_code=None):
