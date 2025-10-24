@@ -27,6 +27,8 @@ from outlines.caching import cache
 
 from sglang.srt.utils import get_bool_env_var
 
+_disabled_cache = lambda fn: None
+
 try:
     # outlines >= 0.1.0
     from outlines_core.fsm.outlines_core_rs import FSMInfo
@@ -55,7 +57,7 @@ def disk_cache(expire: Optional[float] = None, typed=False, ignore=()):
     if not DISABLE_DISK_CACHE:
         return cache(expire, typed, ignore)
     else:
-        return lambda fn: None
+        return _disabled_cache
 
 
 @disk_cache()
