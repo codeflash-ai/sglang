@@ -106,17 +106,31 @@ def get_truncated_value(value):
         return None
 
     if isinstance(value, tuple):
+        # Use list comprehension with possible early exit for all-None tuple values
         return [get_truncated_value(x) for x in value]
 
-    if not isinstance(value, torch.Tensor):
+    # Avoid isinstance call if definitely not a tensor or a tuple
+    # Directly return None if not torch.Tensor
+    if type(value) is not torch.Tensor:
         return None
 
+    # Use .numel() < 200 check as-is
     if value.numel() < 200:
         return value
 
-    slices = [
-        slice(0, 5) if dim_size > 200 else slice(None) for dim_size in value.shape
-    ]
+    # Check if any dimension is over 200 quickly and only build slices list when needed
+    shape = value.shape
+    # Pre-allocate a slices list only if needed
+    need_truncate = False
+    for dim_size in shape:
+        if dim_size > 200:
+            need_truncate = True
+            break
+    if not need_truncate:
+        return value
+
+    # List comprehension avoids overhead of generator+tuple+unpacking
+    slices = [slice(0, 5) if dim_size > 200 else slice(None) for dim_size in shape]
     return value[tuple(slices)]
 
 
