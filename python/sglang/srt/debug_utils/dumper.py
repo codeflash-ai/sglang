@@ -87,9 +87,10 @@ class _Dumper:
 
 
 def _get_partial_name():
-    rank = _get_rank()
+    is_init = dist.is_initialized()
+    rank = dist.get_rank() if is_init else 0
     object_list = [str(time.time()) if rank == 0 else None]
-    if dist.is_initialized():
+    if is_init:
         dist.broadcast_object_list(object_list, device="cuda")
     return object_list[0]
 
