@@ -2426,11 +2426,17 @@ def get_local_ip_by_nic(interface: str = None) -> Optional[str]:
 
 
 def get_local_ip_by_remote() -> Optional[str]:
-    # try ipv4
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Try ipv4 and clean up socket resources immediately (avoid slow destructor/finalizer)
     try:
-        s.connect(("8.8.8.8", 80))  # Doesn't need to be reachable
-        return s.getsockname()[0]
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))  # Doesn't need to be reachable
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            # Fallback to hostname-based resolution
+            s.close()
     except Exception:
         pass
 
@@ -2442,13 +2448,16 @@ def get_local_ip_by_remote() -> Optional[str]:
     except Exception:
         pass
 
-    # try ipv6
+    # Try ipv6 and clean up socket resources immediately
     try:
         s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        # Google's public DNS server, see
-        # https://developers.google.com/speed/public-dns/docs/using#addresses
-        s.connect(("2001:4860:4860::8888", 80))  # Doesn't need to be reachable
-        return s.getsockname()[0]
+        try:
+            s.connect(("2001:4860:4860::8888", 80))  # Doesn't need to be reachable
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            s.close()
     except Exception:
         logger.warning("Can not get local ip by remote")
     return None
@@ -2479,17 +2488,18 @@ def get_local_ip_auto(fallback: str = None) -> str:
         2. Network interface enumeration via get_local_ip_by_nic()
         3. Remote connection method via get_local_ip_by_remote()
     """
-    # Try environment variable
-    host_ip = os.getenv("SGLANG_HOST_IP", "") or os.getenv("HOST_IP", "")
+    # Try environment variable (optimized lookup)
+    host_ip = os.environ.get("SGLANG_HOST_IP", "") or os.environ.get("HOST_IP", "")
     if host_ip:
         return host_ip
     logger.debug("get_ip failed")
-    # Fallback
-    if ip := get_local_ip_by_nic():
+    # Use short-circuit logic for NIC and remote detection
+    ip = get_local_ip_by_nic()
+    if ip:
         return ip
     logger.debug("get_local_ip_by_nic failed")
-    # Fallback
-    if ip := get_local_ip_by_remote():
+    ip = get_local_ip_by_remote()
+    if ip:
         return ip
     logger.debug("get_local_ip_by_remote failed")
     if fallback:
