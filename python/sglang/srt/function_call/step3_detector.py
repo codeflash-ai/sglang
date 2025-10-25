@@ -75,6 +75,11 @@ class Step3Detector(BaseFormatDetector):
             r'<steptml:parameter name="([^"]+)">([^<]*)</steptml:parameter>', re.DOTALL
         )
 
+        # Precompile tool call pattern for repeated use
+        self._tool_call_pattern = re.compile(
+            f"{re.escape(self.tool_call_begin)}(.*?){re.escape(self.tool_call_end)}", re.DOTALL
+        )
+
         # Streaming state variables
         self._in_tool_block: bool = False
         self._tool_block_finished: bool = False
@@ -99,12 +104,30 @@ class Step3Detector(BaseFormatDetector):
         params_text = invoke_match.group(2)
 
         params = {}
+
+        # Build parameter type map once per function instead of per parameter
+        param_type_map = None
+        if tools:
+            func_param_type_map = getattr(self, "_func_param_type_map_cache", None)
+            if func_param_type_map is None or func_name not in func_param_type_map:
+                func_param_type_map = self._build_func_param_type_map(tools)
+                self._func_param_type_map_cache = func_param_type_map
+            param_type_map = func_param_type_map.get(func_name, None)
+
         for param_match in self.param_regex.finditer(params_text):
             param_name = param_match.group(1)
             param_value = param_match.group(2).strip()
 
             # If tools provided, use schema-aware parsing
-            if tools:
+            if param_type_map is not None:
+                arg_type = param_type_map.get(param_name)
+                if arg_type and arg_type != "string":
+                    parsed_value, _ = parse_arguments(param_value)
+                    params[param_name] = parsed_value
+                else:
+                    params[param_name] = param_value
+            elif tools:
+                # Fallback to original method for edge cases
                 arg_type = get_argument_type(func_name, param_name, tools)
                 if arg_type and arg_type != "string":
                     parsed_value, _ = parse_arguments(param_value)
@@ -136,14 +159,10 @@ class Step3Detector(BaseFormatDetector):
 
             # Find all individual tool calls using regex
             calls = []
-            tool_call_pattern = (
-                f"{re.escape(self.tool_call_begin)}(.*?){re.escape(self.tool_call_end)}"
-            )
 
-            for match in re.finditer(tool_call_pattern, tool_section, re.DOTALL):
+            for match in self._tool_call_pattern.finditer(tool_section):
                 call_content = match.group(1)
 
-                # Check if it's a function call
                 if self.tool_sep not in call_content:
                     continue
 
@@ -434,3 +453,15 @@ class Step3Detector(BaseFormatDetector):
             key_value_rule_fmt=key_value_rule_fmt,
             key_value_separator="",
         )
+
+    def _build_func_param_type_map(self, tools: List[Tool]):
+        """Precompute {func_name: {param_name: type}} mapping for efficient lookup."""
+        fn_map = {}
+        for tool in tools:
+            fn = tool.function.name
+            parameters = getattr(tool.function, 'parameters', None) or {}
+            properties = parameters.get("properties", {})
+            # Only create the param map if there are properties
+            if fn and properties:
+                fn_map[fn] = {param: prop.get("type", None) for param, prop in properties.items()}
+        return fn_map
