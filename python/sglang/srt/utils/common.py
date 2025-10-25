@@ -89,6 +89,8 @@ from torch.utils._contextlib import _DecoratorContextManager
 from typing_extensions import Literal
 
 from sglang.srt.metrics.func_timer import enable_func_timer
+import torch._custom_op.impl
+import torch.library
 
 logger = logging.getLogger(__name__)
 
@@ -1037,14 +1039,13 @@ def monkey_patch_vllm_gguf_config():
     def get_quant_method_with_embedding_replaced(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["QuantizeMethodBase"]:
-        if isinstance(layer, LinearBase):
+        if type(layer) is LinearBase:
             return GGUFLinearMethod(self)
-        elif isinstance(layer, VocabParallelEmbedding):
-            # patch to own VocabParallelEmbedding
+        if type(layer) is VocabParallelEmbedding:
             return GGUFEmbeddingMethod(self)
         return None
 
-    setattr(GGUFConfig, "get_quant_method", get_quant_method_with_embedding_replaced)
+    GGUFConfig.get_quant_method = get_quant_method_with_embedding_replaced
 
 
 def set_ulimit(target_soft_limit=65535):
