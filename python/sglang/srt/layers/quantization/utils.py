@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Tuple, Union
 import numpy
 import torch
 
+from sglang.srt.layers.linear import LinearBase
 from sglang.srt.layers.quantization.fp8_kernel import scaled_fp8_quant
+from sglang.srt.layers.quantization.unquant import (
+    UnquantizedEmbeddingMethod,
+    UnquantizedLinearMethod,
+)
+from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
 from sglang.srt.utils import is_cuda
 
 if TYPE_CHECKING:
@@ -271,30 +277,22 @@ def get_linear_quant_method(
     prefix: str,
     linear_method_cls: type,
 ):
-    from sglang.srt.layers.linear import LinearBase
-    from sglang.srt.layers.quantization.unquant import (
-        UnquantizedEmbeddingMethod,
-        UnquantizedLinearMethod,
-    )
-    from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
-
-    cloned_config = deepcopy(config)
     parallel_lm_head_quantized = (
-        isinstance(layer, ParallelLMHead) and cloned_config.lm_head_quantized
+        isinstance(layer, ParallelLMHead) and config.lm_head_quantized
     )
 
     if isinstance(layer, LinearBase) or parallel_lm_head_quantized:
         # False = skip module, None = no override, else = Positive match
-        if get_dynamic_override(cloned_config, layer_name=prefix) is False:
+        if get_dynamic_override(config, layer_name=prefix) is False:
             if parallel_lm_head_quantized:
                 return UnquantizedEmbeddingMethod()
             return UnquantizedLinearMethod()
 
         if prefix:
             # Dynamic per module/layer rules may override base config
-            override_config(cloned_config, prefix=prefix)
+            override_config(config, prefix=prefix)
 
-        return linear_method_cls(cloned_config)
+        return linear_method_cls(config)
     return None
 
 
