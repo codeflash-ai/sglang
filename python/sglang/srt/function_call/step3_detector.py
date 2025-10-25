@@ -31,13 +31,21 @@ def get_argument_type(func_name: str, arg_key: str, defined_tools: List[Tool]) -
 
 def parse_arguments(value: str) -> tuple[Any, bool]:
     """Parse a string value to appropriate type. Returns (parsed_value, success)."""
+    # Optimize: Avoid falling into ast.literal_eval unless clearly not JSON.
+    # Use a cheap check before trying ast.literal_eval if json fails.
     try:
-        try:
-            parsed_value = json.loads(value)
-        except:
-            parsed_value = ast.literal_eval(value)
+        parsed_value = json.loads(value)
         return parsed_value, True
-    except:
+    except Exception:
+        value_stripped = value.strip()
+        # Fast fail if value not surrounded by quotes, brackets, braces, etc.
+        # ast.literal_eval will only succeed on simple literal types.
+        if (value_stripped and value_stripped[0] in ('"', "'", '{', '[', '(', 'T', 'F', 'N', 't', 'f', 'n')):
+            try:
+                parsed_value = ast.literal_eval(value)
+                return parsed_value, True
+            except Exception:
+                pass
         return value, False
 
 
@@ -91,6 +99,9 @@ class Step3Detector(BaseFormatDetector):
         self, text: str, tools: List[Tool] = None
     ) -> tuple[str, dict]:
         """Parse steptml invoke format to extract function name and parameters."""
+
+        # Optimization: If multiple param extraction per function, cache name->tool for tools once.
+        name2tool = {tool.function.name: tool for tool in tools} if tools else None
         invoke_match = self.invoke_regex.search(text)
         if not invoke_match:
             return None, {}
@@ -103,16 +114,23 @@ class Step3Detector(BaseFormatDetector):
             param_name = param_match.group(1)
             param_value = param_match.group(2).strip()
 
-            # If tools provided, use schema-aware parsing
             if tools:
-                arg_type = get_argument_type(func_name, param_name, tools)
+                # Avoid repeated dict lookups by caching outside loop
+                arg_type = None
+                if name2tool is not None:
+                    tool = name2tool.get(func_name)
+                    if tool:
+                        parameters = tool.function.parameters or {}
+                        properties = parameters.get("properties", {})
+                        prop = properties.get(param_name)
+                        if prop:
+                            arg_type = prop.get("type", None)
                 if arg_type and arg_type != "string":
                     parsed_value, _ = parse_arguments(param_value)
                     params[param_name] = parsed_value
                 else:
                     params[param_name] = param_value
             else:
-                # Fallback to generic parsing if no tools provided
                 parsed_value, _ = parse_arguments(param_value)
                 params[param_name] = parsed_value
 
