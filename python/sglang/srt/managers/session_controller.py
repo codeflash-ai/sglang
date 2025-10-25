@@ -47,16 +47,19 @@ class SessionReqNode:
         return self._str_helper(self.req.rid)
 
     def _str_helper(self, prefix=""):
-        if len(self.childs) == 0:
+        if not self.childs:
             return prefix + "\n"
-        else:
-            origin_prefix = prefix
-            prefix += " -- " + self.childs[0].req.rid
-            ret = self.childs[0]._str_helper(prefix)
+        # Precompute reused values and minimize attribute access in loop
+        origin_prefix = prefix
+        first_child = self.childs[0]
+        prefix_first = f"{prefix} -- {first_child.req.rid}"
+        ret = first_child._str_helper(prefix_first)
+        if len(self.childs) > 1:
+            fill = " " * len(origin_prefix)
             for child in self.childs[1:]:
-                prefix = " " * len(origin_prefix) + " \\- " + child.req.rid
-                ret += child._str_helper(prefix)
-            return ret
+                prefix_child = f"{fill} \\- {child.req.rid}"
+                ret += child._str_helper(prefix_child)
+        return ret
 
 
 class Session:
