@@ -89,6 +89,8 @@ from torch.utils._contextlib import _DecoratorContextManager
 from typing_extensions import Literal
 
 from sglang.srt.metrics.func_timer import enable_func_timer
+import torch._custom_op.impl
+import torch.library
 
 logger = logging.getLogger(__name__)
 
@@ -2012,22 +2014,25 @@ def dataclass_to_string_truncated(
 
 
 def permute_weight(x: torch.Tensor) -> torch.Tensor:
-    b_ = x.shape[0]
-    n_ = x.shape[1]
-    k_ = x.shape[2]
+    # Local variables for shapes
+    b_, n_, k_ = x.shape[0], x.shape[1], x.shape[2]
+    dtype = x.dtype
 
-    x_ = x
-    if x.dtype == torch.bfloat16 or x.dtype == torch.float16:
-        x_ = x_.view(int(b_), int(n_ / 16), 16, int(k_ / 32), 4, 8)
-    elif x.dtype == torch.float8_e4m3fnuz or x.dtype == torch.int8:
-        x_ = x_.view(int(b_), int(n_ / 16), 16, int(k_ / 64), 4, 16)
+    # Precompute divisor based on dtype to avoid repeated checks
+    if dtype == torch.bfloat16 or dtype == torch.float16:
+        # Using integer division for efficiency and to avoid float division
+        n_div, k_div = n_ // 16, k_ // 32
+        shape = (b_, n_div, 16, k_div, 4, 8)
+    elif dtype == torch.float8_e4m3fnuz or dtype == torch.int8:
+        n_div, k_div = n_ // 16, k_ // 64
+        shape = (b_, n_div, 16, k_div, 4, 16)
     else:
-        # return x_
-        x_ = x_.view(int(b_), int(n_ / 16), 16, int(k_ / 8), 2, 4)
+        n_div, k_div = n_ // 16, k_ // 8
+        shape = (b_, n_div, 16, k_div, 2, 4)
 
-    x_ = x_.permute(0, 1, 3, 4, 2, 5)
-    x_ = x_.contiguous()
-    x_ = x_.view(*x.shape)
+    # Fused view→permute→contiguous avoids creating x_ repeatedly,
+    # handles in-place transitions to reduce temporaries
+    x_ = x.view(*shape).permute(0, 1, 3, 4, 2, 5).contiguous().view(*x.shape)
     return x_
 
 
