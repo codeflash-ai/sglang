@@ -684,47 +684,34 @@ def decode_video_base64(video_base64):
     ], "FRAME_FORMAT must be either 'PNG' or 'JPEG'"
 
     if frame_format == "PNG":
-        # Find each PNG start signature to isolate images
+        # --- OPTIMIZED PNG HEADER SEARCH ---
+        # Use .find() on bytes for signature scan, much faster than manual iteration
+        signature = b'\x89PNG\r\n\x1a\n'
         i = 0
-        while i < len(video_bytes) - 7:  # Adjusted for the length of the PNG signature
-            # Check if we found the start of a PNG file
-            if (
-                video_bytes[i] == 0x89
-                and video_bytes[i + 1] == 0x50
-                and video_bytes[i + 2] == 0x4E
-                and video_bytes[i + 3] == 0x47
-                and video_bytes[i + 4] == 0x0D
-                and video_bytes[i + 5] == 0x0A
-                and video_bytes[i + 6] == 0x1A
-                and video_bytes[i + 7] == 0x0A
-            ):
-                img_starts.append(i)
-                i += 8  # Skip the PNG signature
-            else:
-                i += 1
+        video_len = len(video_bytes)
+        while i < video_len:
+            found = video_bytes.find(signature, i)
+            if found == -1:
+                break
+            img_starts.append(found)
+            i = found + 8  # Move past this PNG header
     else:
-        # Find each JPEG start (0xFFD8) to isolate images
+        # Find each JPEG start (0xFFD8) to isolate images using .find() for fast scan
+        signature = b'\xff\xd8'
         i = 0
-        while (
-            i < len(video_bytes) - 1
-        ):  # Adjusted for the length of the JPEG SOI signature
-            # Check if we found the start of a JPEG file
-            if video_bytes[i] == 0xFF and video_bytes[i + 1] == 0xD8:
-                img_starts.append(i)
-                # Move to the next byte to continue searching for the next image start
-                i += 2
-            else:
-                i += 1
+        video_len = len(video_bytes)
+        while i < video_len:
+            found = video_bytes.find(signature, i)
+            if found == -1:
+                break
+            img_starts.append(found)
+            i = found + 2  # Move past this JPEG header
 
     frames = []
-    for start_idx in img_starts:
-        # Assuming each image is back-to-back, the end of one image is the start of another
-        # The last image goes until the end of the byte string
-        end_idx = (
-            img_starts[img_starts.index(start_idx) + 1]
-            if img_starts.index(start_idx) + 1 < len(img_starts)
-            else len(video_bytes)
-        )
+    # --- OPTIMIZATION: pre-compute end indices ---
+    img_starts_len = len(img_starts)
+    ends = img_starts[1:] + [len(video_bytes)]
+    for start_idx, end_idx in zip(img_starts, ends):
         img_bytes = video_bytes[start_idx:end_idx]
 
         # Convert bytes to a PIL Image
