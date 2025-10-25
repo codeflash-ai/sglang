@@ -89,6 +89,10 @@ from torch.utils._contextlib import _DecoratorContextManager
 from typing_extensions import Literal
 
 from sglang.srt.metrics.func_timer import enable_func_timer
+import torch._custom_op.impl
+import torch.library
+
+_cmo_stream = torch.get_device_module().Stream()
 
 logger = logging.getLogger(__name__)
 
@@ -547,7 +551,7 @@ def make_layers_non_pp(
     return layers
 
 
-cmo_stream = None
+cmo_stream = _cmo_stream
 
 
 def get_cmo_stream():
@@ -556,9 +560,6 @@ def get_cmo_stream():
     Launch a new stream to prefetch the weight of matmul when running other
     AIV or communication kernels, aiming to overlap the memory access time.
     """
-    global cmo_stream
-    if cmo_stream is None:
-        cmo_stream = torch.get_device_module().Stream()
     return cmo_stream
 
 
