@@ -55,16 +55,16 @@ def get_logprob_dict_from_result(result: GenerationBatchResult) -> dict:
     return {
         "extend_input_len_per_req": result.extend_input_len_per_req,
         "extend_logprob_start_len_per_req": result.extend_logprob_start_len_per_req,
-        "next_token_logprobs": result.logits_output.next_token_logprobs,
-        "next_token_top_logprobs_val": result.logits_output.next_token_top_logprobs_val,
-        "next_token_top_logprobs_idx": result.logits_output.next_token_top_logprobs_idx,
-        "next_token_token_ids_logprobs_val": result.logits_output.next_token_token_ids_logprobs_val,
-        "next_token_token_ids_logprobs_idx": result.logits_output.next_token_token_ids_logprobs_idx,
-        "input_token_logprobs": result.logits_output.input_token_logprobs,
-        "input_top_logprobs_val": result.logits_output.input_top_logprobs_val,
-        "input_top_logprobs_idx": result.logits_output.input_top_logprobs_idx,
-        "input_token_ids_logprobs_val": result.logits_output.input_token_ids_logprobs_val,
-        "input_token_ids_logprobs_idx": result.logits_output.input_token_ids_logprobs_idx,
+        "next_token_logprobs": logits_output.next_token_logprobs,
+        "next_token_top_logprobs_val": logits_output.next_token_top_logprobs_val,
+        "next_token_top_logprobs_idx": logits_output.next_token_top_logprobs_idx,
+        "next_token_token_ids_logprobs_val": logits_output.next_token_token_ids_logprobs_val,
+        "next_token_token_ids_logprobs_idx": logits_output.next_token_token_ids_logprobs_idx,
+        "input_token_logprobs": logits_output.input_token_logprobs,
+        "input_top_logprobs_val": logits_output.input_top_logprobs_val,
+        "input_top_logprobs_idx": logits_output.input_top_logprobs_idx,
+        "input_token_ids_logprobs_val": logits_output.input_token_ids_logprobs_val,
+        "input_token_ids_logprobs_idx": logits_output.input_token_ids_logprobs_idx,
     }
 
 
