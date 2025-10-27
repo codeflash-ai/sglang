@@ -20,14 +20,22 @@ def select_best_resolution(image_size, candidate_resolutions):
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
+    original_area = original_width * original_height
+
     for width, height in candidate_resolutions:
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        scale_w = width / original_width
+        scale_h = height / original_height
+
+        if scale_w < scale_h:
+            downscaled_width = width
+            downscaled_height = int(original_height * scale_w)
+        else:
+            downscaled_width = int(original_width * scale_h)
+            downscaled_height = height
+
+        downscaled_area = downscaled_width * downscaled_height
+        effective_resolution = downscaled_area if downscaled_area < original_area else original_area
+
         wasted_resolution = (width * height) - effective_resolution
 
         if effective_resolution > max_effective_resolution or (
