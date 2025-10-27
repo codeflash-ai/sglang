@@ -41,7 +41,9 @@ class TokenLengthNormalized(ChoicesSamplingMethod):
         unconditional_token_logprobs: Optional[List[List[Any]]] = None,
     ) -> ChoicesDecision:
         """Select the option with the highest token length normalized prompt logprob."""
-        best_choice = choices[np.argmax(normalized_prompt_logprobs)]
+        # Use Python's built-in max with enumerate, which is significantly faster than np.argmax on lists
+        idx = max(enumerate(normalized_prompt_logprobs), key=lambda x: x[1])[0]
+        best_choice = choices[idx]
         meta_info = {
             "normalized_prompt_logprobs": normalized_prompt_logprobs,
             "input_token_logprobs": input_token_logprobs,
