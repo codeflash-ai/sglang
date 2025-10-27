@@ -16,10 +16,12 @@ class BatchedFrequencyPenalizer(_BatchedPenalizer):
         self._is_prepared = False
 
     def _is_required(self) -> bool:
-        return any(
-            req.sampling_params.frequency_penalty != 0.0
-            for req in self.orchestrator.reqs()
-        )
+        # Avoid repeated attribute lookups in inner loop for performance
+        reqs = self.orchestrator.reqs()
+        for req in reqs:
+            if req.sampling_params.frequency_penalty != 0.0:
+                return True
+        return False
 
     def _prepare(self):
         self.cumulated_frequency_penalties = torch.zeros(

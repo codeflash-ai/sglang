@@ -19,6 +19,7 @@ class BatchedPenalizerOrchestrator:
     ):
         self.vocab_size = vocab_size
         self._batch_ref = weakref.ref(batch)
+        self._batch = batch  # Cache the batch for faster access
         self.device = batch.device
         self.penalizers = {Penalizer: Penalizer(self) for Penalizer in penalizers}
 
@@ -40,7 +41,7 @@ class BatchedPenalizerOrchestrator:
             self._batch_ref = weakref.ref(value)
 
     def reqs(self):
-        return self.batch.reqs
+        return self._batch.reqs  # Direct attribute access is faster than weakref lookup
 
     def cumulate_output_tokens(self, output_ids: torch.Tensor):
         """
