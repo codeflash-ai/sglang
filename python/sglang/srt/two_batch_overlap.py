@@ -954,15 +954,19 @@ def _model_forward_filter_inputs(
 
 
 def _model_forward_tbo_merge_outputs(output_a, output_b):
-    def _handle_key(name):
-        value_a = output_a[name]
-        value_b = output_b[name]
-        assert (value_a is None) == (value_b is None)
-        if value_a is None:
-            return None
-        return torch.concat([value_a, value_b], dim=0)
+    # Precompute None checks to avoid repeated lookup and function call overhead
+    hidden_a, hidden_b = output_a["hidden_states"], output_b["hidden_states"]
+    residual_a, residual_b = output_a["residual"], output_b["residual"]
 
-    return _handle_key("hidden_states"), _handle_key("residual")
+    def _merge(a, b):
+        # Direct comparison avoids function call for None
+        assert (a is None) == (b is None)
+        if a is None:
+            return None
+        # torch.cat is slightly faster to import due to shorter name
+        return torch.cat([a, b], dim=0)
+
+    return _merge(hidden_a, hidden_b), _merge(residual_a, residual_b)
 
 
 # -------------------------------- Utilities and wrappers ---------------------------------------
