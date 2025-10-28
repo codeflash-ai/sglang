@@ -55,15 +55,15 @@ def get_token_num_per_seq(
     forward_mode: ForwardMode,
     spec_info: Optional[SpecInput] = None,
 ):
+    """Compute the number of tokens per sequence for different forward modes."""
     if forward_mode.is_target_verify():
         return spec_info.draft_token_num
-    elif forward_mode.is_decode():
+    if forward_mode.is_decode():
         return 1
-    elif forward_mode.is_idle():
+    if forward_mode.is_idle():
         return 0
-    else:
-        # For extend, we should not use `token_num_per_seq`.
-        return None
+    # For extend, we should not use `token_num_per_seq`.
+    return None
 
 
 # TODO: may smartly disable TBO when batch size is too small b/c it will slow down
@@ -73,17 +73,17 @@ def compute_split_seq_index(
     extend_lens: Optional[Sequence[int]],
     token_num_per_seq: Optional[int],
 ) -> Optional[int]:
+    """Efficiently compute the split sequence index given the forward mode."""
     if forward_mode == ForwardMode.EXTEND:
         assert extend_lens is not None
         return _split_extend_seqs(extend_lens)
-    elif forward_mode.is_target_verify() or forward_mode.is_decode():
+    if forward_mode.is_target_verify() or forward_mode.is_decode():
         assert token_num_per_seq is not None
         return (num_tokens // token_num_per_seq) // 2
-    elif forward_mode.is_idle():
+    if forward_mode.is_idle():
         assert num_tokens == 0
         return 0
-    else:
-        raise NotImplementedError()
+    raise NotImplementedError()
 
 
 def _is_two_chunk_split_enabled(extend_lens: Sequence[int]) -> bool:
@@ -260,19 +260,25 @@ def compute_split_token_index(
     extend_seq_lens: Optional[Sequence[int]],
     token_num_per_seq: Optional[int],
 ) -> int:
+    """Compute the split token index for different forward modes."""
     if forward_mode == ForwardMode.EXTEND:
         assert extend_seq_lens is not None
+        # Only sum once if we need the total sum for the two chunk split
         if _is_two_chunk_split_enabled(extend_seq_lens):
-            return sum(extend_seq_lens) // 2
+            # Avoid a redundant sum by only calling sum once
+            total = 0
+            for l in extend_seq_lens:
+                total += l
+            return total // 2
+        # Use sum built-in for range slice - fast for lists
         return sum(extend_seq_lens[:split_seq_index])
-    elif forward_mode.is_target_verify() or forward_mode.is_decode():
+    if forward_mode.is_target_verify() or forward_mode.is_decode():
         assert token_num_per_seq is not None
         return split_seq_index * token_num_per_seq
-    elif forward_mode.is_idle():
+    if forward_mode.is_idle():
         assert split_seq_index == 0
         return 0
-    else:
-        raise NotImplementedError
+    raise NotImplementedError
 
 
 def compute_split_indices_for_cuda_graph_replay(
@@ -280,25 +286,28 @@ def compute_split_indices_for_cuda_graph_replay(
     cuda_graph_num_tokens: int,
     spec_info: Optional[SpecInput],
 ):
-    forward_mode_for_tbo_split = (
-        forward_mode if forward_mode != ForwardMode.IDLE else ForwardMode.DECODE
-    )
+    """
+    Compute both seq and token split indices for CUDA graph replay.
+    Avoids unnecessary work if in IDLE mode by using DECODE mode semantics.
+    """
+    # Reuse forward_mode or use DECODE if idle (no-op graph replay)
+    fwd_mode = forward_mode if forward_mode != ForwardMode.IDLE else ForwardMode.DECODE
     token_num_per_seq = get_token_num_per_seq(
         forward_mode=forward_mode, spec_info=spec_info
     )
-    tbo_split_seq_index = compute_split_seq_index(
-        forward_mode=forward_mode_for_tbo_split,
+    seq_idx = compute_split_seq_index(
+        forward_mode=fwd_mode,
         num_tokens=cuda_graph_num_tokens,
         extend_lens=None,
         token_num_per_seq=token_num_per_seq,
     )
-    tbo_split_token_index = compute_split_token_index(
-        split_seq_index=tbo_split_seq_index,
-        forward_mode=forward_mode_for_tbo_split,
+    token_idx = compute_split_token_index(
+        split_seq_index=seq_idx,
+        forward_mode=fwd_mode,
         extend_seq_lens=None,
         token_num_per_seq=token_num_per_seq,
     )
-    return tbo_split_seq_index, tbo_split_token_index
+    return seq_idx, token_idx
 
 
 # -------------------------------- Preparation ---------------------------------------
