@@ -440,24 +440,26 @@ class OpenAIServingCompletion(OpenAIServingBase):
     def _prepare_echo_prompts(self, request: CompletionRequest) -> List[str]:
         """Prepare echo prompts for non-streaming response"""
         # TODO: handle the case prompt is token ids
-        if isinstance(request.prompt, list) and isinstance(request.prompt[0], str):
-            # for the case of multiple str prompts
-            return request.prompt
-        elif isinstance(request.prompt, list) and isinstance(request.prompt[0], list):
-            # for the case of multiple token ids prompts
-            return [
-                self.tokenizer_manager.tokenizer.decode(
-                    prompt, skip_special_tokens=True
-                )
-                for prompt in request.prompt
-            ]
-        elif isinstance(request.prompt, list) and isinstance(request.prompt[0], int):
-            # for the case of single token ids prompt
-            return [
-                self.tokenizer_manager.tokenizer.decode(
-                    request.prompt, skip_special_tokens=True
-                )
-            ]
+        prompt = request.prompt
+        if isinstance(prompt, list):
+            first = prompt[0]
+            if isinstance(first, str):
+                # for the case of multiple str prompts
+                return prompt
+            elif isinstance(first, list):
+                # for the case of multiple token ids prompts
+                decode = self.tokenizer_manager.tokenizer.decode
+                return [
+                    decode(p, skip_special_tokens=True)
+                    for p in prompt
+                ]
+            elif isinstance(first, int):
+                # for the case of single token ids prompt
+                return [
+                    self.tokenizer_manager.tokenizer.decode(
+                        prompt, skip_special_tokens=True
+                    )
+                ]
         else:
             # for the case of single str prompt
-            return [request.prompt]
+            return [prompt]
