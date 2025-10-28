@@ -915,25 +915,22 @@ def _model_forward_tbo_split_inputs_raw(
     forward_batch: ForwardBatch,
     zero_allocator: Optional[BumpAllocator],
 ) -> List[Dict]:
-    return [
-        dict(
-            **_model_forward_filter_inputs(
-                hidden_states=hidden_states,
-                residual=residual,
-                positions=positions,
-                output_forward_batch=output_forward_batch,
-                tbo_subbatch_index=tbo_subbatch_index,
-            ),
-            **(
-                dict(zero_allocator=zero_allocator)
-                if zero_allocator is not None
-                else {}
-            ),
+    results = []
+    for tbo_subbatch_index, output_forward_batch in enumerate(
+        forward_batch.tbo_children
+    ):
+        token_slice = slice(*output_forward_batch.tbo_parent_token_range)
+        item = dict(
+            hidden_states=hidden_states[token_slice],
+            residual=None if residual is None else residual[token_slice],
+            positions=positions[token_slice],
+            forward_batch=output_forward_batch,
+            tbo_subbatch_index=tbo_subbatch_index,
         )
-        for tbo_subbatch_index, output_forward_batch in enumerate(
-            forward_batch.tbo_children
-        )
-    ]
+        if zero_allocator is not None:
+            item["zero_allocator"] = zero_allocator
+        results.append(item)
+    return results
 
 
 def _model_forward_filter_inputs(
