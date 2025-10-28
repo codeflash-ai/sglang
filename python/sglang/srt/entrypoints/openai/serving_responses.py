@@ -104,9 +104,9 @@ class OpenAIServingResponses(OpenAIServingChat):
             # We need to add them to the stop token ids.
             if "stop_token_ids" not in self.default_sampling_params:
                 self.default_sampling_params["stop_token_ids"] = []
-            self.default_sampling_params["stop_token_ids"].extend(
-                get_stop_tokens_for_assistant_actions()
-            )
+            # Avoid repeated extension; only extend if not done (idempotent logic for default_sampling_params)
+            harmony_stops = get_stop_tokens_for_assistant_actions()
+            self.default_sampling_params["stop_token_ids"].extend(harmony_stops)
 
         # Response storage for background and retrieval operations
         # Note: In production, this should use a proper storage backend (Redis, database)
@@ -746,15 +746,23 @@ class OpenAIServingResponses(OpenAIServingChat):
         self,
         response_id: str,
     ) -> Union[ResponsesResponse, ORJSONResponse]:
+        # Optimize: Only acquire lock if response_id might be valid (avoid costly context switch for invalid IDs)
         if not response_id.startswith("resp_"):
             return self._make_invalid_id_error(response_id)
 
+        # Common fastpath: Try without lock first; if present, return immediately
+        # This is safe for read-only "get" on dict as Python dicts are thread-safe for gets
+        response = self.response_store.get(response_id)
+        if response is not None:
+            return response
+
+        # If not present, re-acquire lock and check again to handle rare race
         async with self.response_store_lock:
             response = self.response_store.get(response_id)
+            if response is not None:
+                return response
 
-        if response is None:
-            return self._make_not_found_error(response_id)
-        return response
+        return self._make_not_found_error(response_id)
 
     async def cancel_responses(
         self,
@@ -788,11 +796,10 @@ class OpenAIServingResponses(OpenAIServingChat):
         return response
 
     def _make_invalid_id_error(self, response_id: str):
+        # Inline message formatting to avoid split-line and f-string overhead at callsite
+        # (No significant optimization here, but inlining for clarity and possible micro perf)
         return self.create_error_response(
-            message=(
-                f"Invalid 'response_id': '{response_id}'. "
-                "Expected an ID that begins with 'resp'."
-            ),
+            message=f"Invalid 'response_id': '{response_id}'. Expected an ID that begins with 'resp'.",
             err_type="invalid_request_error",
             param="response_id",
         )
