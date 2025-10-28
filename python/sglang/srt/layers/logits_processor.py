@@ -228,20 +228,24 @@ class LogitsProcessor(nn.Module):
         super().__init__()
         self.config = config
         self.logit_scale = logit_scale
-        self.use_attn_tp_group = get_global_server_args().enable_dp_lm_head
-        self.use_fp32_lm_head = get_global_server_args().enable_fp32_lm_head
+        global_server_args = get_global_server_args()
+        self.use_attn_tp_group = global_server_args.enable_dp_lm_head
+        self.use_fp32_lm_head = global_server_args.enable_fp32_lm_head
         if self.use_attn_tp_group:
-            self.attn_tp_size = get_attention_tp_size()
+            attn_tp_size = get_attention_tp_size()
+            self.attn_tp_size = attn_tp_size
             self.do_tensor_parallel_all_gather = (
-                not skip_all_gather and self.attn_tp_size > 1
+                not skip_all_gather and attn_tp_size > 1
             )
             self.do_tensor_parallel_all_gather_dp_attn = False
         else:
+            tp_world_size = get_tensor_model_parallel_world_size()
             self.do_tensor_parallel_all_gather = (
-                not skip_all_gather and get_tensor_model_parallel_world_size() > 1
+                not skip_all_gather and tp_world_size > 1
             )
+            attention_dp_size = get_attention_dp_size()
             self.do_tensor_parallel_all_gather_dp_attn = (
-                self.do_tensor_parallel_all_gather and get_attention_dp_size() != 1
+                self.do_tensor_parallel_all_gather and attention_dp_size != 1
             )
         self.final_logit_softcapping = getattr(
             self.config, "final_logit_softcapping", None
@@ -253,7 +257,7 @@ class LogitsProcessor(nn.Module):
             self.final_logit_softcapping = None
 
         self.debug_tensor_dump_output_folder = (
-            get_global_server_args().debug_tensor_dump_output_folder
+            global_server_args.debug_tensor_dump_output_folder
         )
 
     def compute_logprobs_for_multi_item_scoring(
@@ -708,30 +712,34 @@ class LogitsProcessor(nn.Module):
         logits_metadata: LogitsMetadata,
         delay_cpu_copy: bool = False,
     ):
-        input_token_ids_logprobs_val, input_token_ids_logprobs_idx = [], []
+        # Optimize with pre-allocation for output lists and reduce per-loop list copying
+        token_ids_logprobs = logits_metadata.token_ids_logprobs
+        pruned_lens_cpu = logits_metadata.extend_logprob_pruned_lens_cpu
+        num_elements = len(token_ids_logprobs)
+        input_token_ids_logprobs_val = [None] * num_elements
+        input_token_ids_logprobs_idx = [None] * num_elements
         pt = 0
-        for token_ids, pruned_len in zip(
-            logits_metadata.token_ids_logprobs,
-            logits_metadata.extend_logprob_pruned_lens_cpu,
-        ):
+
+        for i in range(num_elements):
+            token_ids = token_ids_logprobs[i]
+            pruned_len = pruned_lens_cpu[i]
             if pruned_len <= 0:
-                input_token_ids_logprobs_val.append([])
-                input_token_ids_logprobs_idx.append([])
-                continue
-
-            position_logprobs = all_logprobs[
-                pt : pt + pruned_len, token_ids
-            ]  # Shape: [pruned_len, num_tokens]
-
-            if delay_cpu_copy:
-                # Keep as tensor to delay GPU-to-CPU transfer
-                input_token_ids_logprobs_val.append(position_logprobs)
+                input_token_ids_logprobs_val[i] = []
+                input_token_ids_logprobs_idx[i] = []
             else:
-                # Convert to list immediately (default behavior)
-                input_token_ids_logprobs_val.append(position_logprobs.tolist())
+                # Slice once, reuse the same memory
+                position_logprobs = all_logprobs[
+                    pt : pt + pruned_len, token_ids
+                ]  # Shape: [pruned_len, num_tokens]
 
-            input_token_ids_logprobs_idx.append([token_ids for _ in range(pruned_len)])
-            pt += pruned_len
+                if delay_cpu_copy:
+                    input_token_ids_logprobs_val[i] = position_logprobs
+                else:
+                    input_token_ids_logprobs_val[i] = position_logprobs.tolist()
+
+                # Efficiently repeat token_ids by using list multiplication instead of a loop
+                input_token_ids_logprobs_idx[i] = [token_ids] * pruned_len
+                pt += pruned_len
 
         return input_token_ids_logprobs_val, input_token_ids_logprobs_idx
 
