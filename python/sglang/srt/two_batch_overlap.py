@@ -449,7 +449,13 @@ class TboDPAttentionPreparer:
 
     @staticmethod
     def _is_all_same(x):
-        return all(value == x[0] for value in x)
+        if not x:
+            return True
+        first = x[0]
+        for value in x:
+            if value != first:
+                return False
+        return True
 
 
 class TboForwardBatchPreparer:
