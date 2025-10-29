@@ -1,4 +1,4 @@
-from typing import Any, Dict, Literal, Optional
+from typing import Dict, Literal, Optional
 
 
 class EBNFComposer:
@@ -106,25 +106,22 @@ class EBNFComposer:
         enum_values = prop["enum"]
         prop_type = prop.get("type", "string")
 
-        def format_enum_val(v: Any) -> str:
-            if prop_type == "boolean":
-                if function_format == "json" or function_format == "xml":
-                    return "true" if v else "false"
-                elif function_format == "pythonic":
-                    return "True" if v else "False"
-                else:
-                    return str(v)  # fallback
-
-            if prop_type == "string":
-                if function_format == "xml":
-                    return f'"{v}"'
-                else:  # json or pythonic
-                    return f'"\\"{v}\\""'  # escape quote-wrapped string
-
+        if prop_type == "boolean":
+            if function_format == "json" or function_format == "xml":
+                formatted_values = ["true" if v else "false" for v in enum_values]
+            elif function_format == "pythonic":
+                formatted_values = ["True" if v else "False" for v in enum_values]
+            else:
+                formatted_values = [str(v) for v in enum_values]  # fallback
+        elif prop_type == "string":
+            if function_format == "xml":
+                formatted_values = [f'"{v}"' for v in enum_values]
+            else:  # json or pythonic
+                formatted_values = [f'"\\"{v}\\""' for v in enum_values]
+        else:
             # All other types (number, integer, etc.)
-            return str(v)
+            formatted_values = [str(v) for v in enum_values]
 
-        formatted_values = [format_enum_val(v) for v in enum_values]
         enum_rule = " | ".join(formatted_values)
         return f"({enum_rule})" if len(formatted_values) > 1 else enum_rule
 
