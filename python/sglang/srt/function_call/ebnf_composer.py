@@ -131,9 +131,17 @@ class EBNFComposer:
     @staticmethod
     def get_type_mapping(function_format: str) -> Dict[str, str]:
         """Get the complete type mapping for a given format."""
+        # Avoid copy & update if no overrides
+        overrides = EBNFComposer.FORMAT_TYPE_OVERRIDES.get(function_format)
+        if not overrides:
+            # Direct return, safe since BASE_TYPE_MAPPING values aren't mutated
+            return EBNFComposer.BASE_TYPE_MAPPING
+        # For memory: merge only necessary (avoid dict comprehension if all overrides present with None)
+        # Also: no need to filter for v is not None, as FORMAT_TYPE_OVERRIDES does not use None; but keep for safety 
         mapping = EBNFComposer.BASE_TYPE_MAPPING.copy()
-        overrides = EBNFComposer.FORMAT_TYPE_OVERRIDES.get(function_format, {})
-        mapping.update({k: v for k, v in overrides.items() if v is not None})
+        for k, v in overrides.items():
+            if v is not None:
+                mapping[k] = v
         return mapping
 
     @staticmethod
@@ -142,14 +150,17 @@ class EBNFComposer:
         prop_type = prop["type"]
         type_mapping = EBNFComposer.get_type_mapping(function_format)
 
+        # Use fast path for str (most common) and optimize type lookup
         if isinstance(prop_type, list):
-            type_rules = [
-                type_mapping.get(single_type, function_format)
-                for single_type in prop_type
-            ]
+            # Pre-allocate list to size for faster join
+            n_types = len(prop_type)
+            # Use list comprehension directly
+            # Convert lookup function to local for speed
+            get_type = type_mapping.get
+            type_rules = [get_type(t, function_format) for t in prop_type]
             return " | ".join(type_rules) if type_rules else function_format
-
-        return type_mapping.get(prop_type, function_format)
+        else:
+            return type_mapping.get(prop_type, function_format)
 
     @staticmethod
     def build_ebnf(
