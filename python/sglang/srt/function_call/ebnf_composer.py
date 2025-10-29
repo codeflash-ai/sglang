@@ -1,4 +1,4 @@
-from typing import Any, Dict, Literal, Optional
+from typing import Dict, Literal, Optional
 
 
 class EBNFComposer:
@@ -103,30 +103,33 @@ class EBNFComposer:
     @staticmethod
     def _handle_enum(prop: dict, function_format: str) -> str:
         """Handle enum properties by formatting each value according to type and format."""
+        # Localize all lookups to avoid repeated dict access
         enum_values = prop["enum"]
         prop_type = prop.get("type", "string")
+        f_format = function_format
 
-        def format_enum_val(v: Any) -> str:
-            if prop_type == "boolean":
-                if function_format == "json" or function_format == "xml":
-                    return "true" if v else "false"
-                elif function_format == "pythonic":
-                    return "True" if v else "False"
-                else:
-                    return str(v)  # fallback
+        # Hoist checks out of loop and minimize function call overhead
+        if prop_type == "boolean":
+            if f_format == "pythonic":
+                formatted_values = ["True" if v else "False" for v in enum_values]
+            elif f_format == "json" or f_format == "xml":
+                formatted_values = ["true" if v else "false" for v in enum_values]
+            else:
+                formatted_values = [str(v) for v in enum_values]
+        elif prop_type == "string":
+            if f_format == "xml":
+                formatted_values = [f'"{v}"' for v in enum_values]
+            else:  # json or pythonic
+                # Pre-construct pattern for speed
+                formatted_values = [f'"\\"{v}\\""' for v in enum_values]
+        else:
+            formatted_values = [str(v) for v in enum_values]
 
-            if prop_type == "string":
-                if function_format == "xml":
-                    return f'"{v}"'
-                else:  # json or pythonic
-                    return f'"\\"{v}\\""'  # escape quote-wrapped string
-
-            # All other types (number, integer, etc.)
-            return str(v)
-
-        formatted_values = [format_enum_val(v) for v in enum_values]
         enum_rule = " | ".join(formatted_values)
-        return f"({enum_rule})" if len(formatted_values) > 1 else enum_rule
+        if len(formatted_values) > 1:
+            return f"({enum_rule})"
+        else:
+            return enum_rule
 
     @staticmethod
     def get_type_mapping(function_format: str) -> Dict[str, str]:
@@ -142,14 +145,18 @@ class EBNFComposer:
         prop_type = prop["type"]
         type_mapping = EBNFComposer.get_type_mapping(function_format)
 
-        if isinstance(prop_type, list):
-            type_rules = [
-                type_mapping.get(single_type, function_format)
-                for single_type in prop_type
-            ]
-            return " | ".join(type_rules) if type_rules else function_format
+        # Fast path for single types
+        if not isinstance(prop_type, list):
+            return type_mapping.get(prop_type, function_format)
 
-        return type_mapping.get(prop_type, function_format)
+        # For type unions, avoid intermediate list if only one result
+        type_rules = [type_mapping.get(single_type, function_format) for single_type in prop_type]
+        if not type_rules:
+            return function_format
+        elif len(type_rules) == 1:
+            return type_rules[0]
+        else:
+            return " | ".join(type_rules)
 
     @staticmethod
     def build_ebnf(
