@@ -136,12 +136,15 @@ def _check_extra_key(key0: RadixKey, key1: RadixKey):
 
 def _key_match_page_size1(key0: RadixKey, key1: RadixKey):
     _check_extra_key(key0, key1)
-    i = 0
-    for k0, k1 in zip(key0.token_ids, key1.token_ids):
-        if k0 != k1:
-            break
-        i += 1
-    return i
+    # Fast-path equality check before loop for early exit
+    token_ids0 = key0.token_ids
+    token_ids1 = key1.token_ids
+    n = min(len(token_ids0), len(token_ids1))
+    # Use enumerate and sequence indexing for optimal tight loop performance
+    for i in range(n):
+        if token_ids0[i] != token_ids1[i]:
+            return i
+    return n
 
 
 def _key_match_paged(key0: RadixKey, key1: RadixKey, page_size: int):
