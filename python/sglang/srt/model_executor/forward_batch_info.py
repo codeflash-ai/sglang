@@ -1017,18 +1017,41 @@ def compute_position_kernel(
 def compute_position_torch(
     extend_prefix_lens: torch.Tensor, extend_seq_lens: torch.Tensor
 ):
-    positions = torch.cat(
-        [
-            torch.arange(
-                prefix_len, prefix_len + extend_len, device=extend_prefix_lens.device
-            )
-            for prefix_len, extend_len in zip(extend_prefix_lens, extend_seq_lens)
-        ],
-        axis=0,
-    )
+    # Fast implementation: vectorized arange rather than list comprehension + cat
+    # Both extend_prefix_lens and extend_seq_lens are assumed to be 1D tensors of the same shape
+    device = extend_prefix_lens.device
+    dtype = torch.int64
+
+    # Compute the start locations of each block in the 'positions' sequence
     extend_start_loc = torch.zeros_like(extend_seq_lens)
-    extend_start_loc[1:] = torch.cumsum(extend_seq_lens[:-1], dim=0)
-    return positions.to(torch.int64), extend_start_loc
+    if extend_seq_lens.numel() > 1:
+        extend_start_loc[1:] = torch.cumsum(extend_seq_lens[:-1], dim=0)
+
+    # Compute total number of positions to allocate flat output
+    total_pos = int(extend_seq_lens.sum().item())
+
+    # Compute per-interval values
+    starts = extend_prefix_lens.to(dtype)
+    lens = extend_seq_lens.to(dtype)
+
+    # Build an array of output indices mapping each output position to its interval
+    # To do this efficiently:
+    #   For each segment i, the positions span:
+    #     output indices: extend_start_loc[i] ... extend_start_loc[i]+lens[i]-1
+    #     values:         starts[i]            ... starts[i]+lens[i]-1
+    # We'll build a segment_ids array indicating interval for each output index
+    # This is accomplished with torch.repeat_interleave.
+    segment_ids = torch.repeat_interleave(
+        torch.arange(len(lens), device=device), lens
+    )
+
+    # positions = starts[segment_ids] + (arange per segment)
+    rel_indices = torch.cat([
+        torch.arange(l, device=device)
+        for l in lens.tolist()
+    ])
+    positions = starts[segment_ids] + rel_indices
+    return positions.to(dtype), extend_start_loc
 
 
 @torch.compile(dynamic=True, backend=get_compiler_backend(), disable=_is_npu)
