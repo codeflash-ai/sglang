@@ -19,15 +19,15 @@ from typing import List
 def two_sides_exponential_buckets(
     middle: float, base: float, count: int
 ) -> List[float]:
-    buckets = []
+    buckets = set()
     half_count = math.ceil(count / 2)
     distance = 1
-    buckets.append(middle)
+    buckets.add(middle)
     for i in range(half_count):
         distance *= base
-        buckets.append(middle + distance)
-        buckets.append(max(0, middle - distance))
-    return sorted(set(buckets))
+        buckets.add(middle + distance)
+        buckets.add(max(0, middle - distance))
+    return sorted(buckets)
 
 
 def generate_buckets(
@@ -40,12 +40,17 @@ def generate_buckets(
     rule = buckets_rule[0]
     if rule == "tse":
         middle, base, count = buckets_rule[1:]
-        assert float(base) > 1.0, "Base must be greater than 1.0"
-        return two_sides_exponential_buckets(float(middle), float(base), int(count))
+        base_f = float(base)
+        assert base_f > 1.0, "Base must be greater than 1.0"
+        # Avoid repeated float conversions inside tight loop of two_sides_exponential_buckets
+        return two_sides_exponential_buckets(float(middle), base_f, int(count))
     if rule == "default":
+        # Avoid repeated set/sort; use dict.fromkeys if input is already sorted and few duplicates
+        # Otherwise, use set to remove duplicates and sort once
         return sorted(set(default_buckets))
     assert rule == "custom"
-    return sorted(set([float(x) for x in buckets_rule[1:]]))
+    # Preallocate list-comprehension and avoid intermediate list (use generator with set)
+    return sorted(set(map(float, buckets_rule[1:])))
 
 
 def exponential_buckets(start: float, width: float, length: int) -> List[float]:
