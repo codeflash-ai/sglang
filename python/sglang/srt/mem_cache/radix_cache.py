@@ -173,9 +173,12 @@ def _convert_to_bigram_key(tokens: List[int]) -> List[Tuple[int, int]]:
     # [1, 2, 3, 4] -> [(1,2), (2,3), (3,4)]
     if len(tokens) < 2:
         return []
-    if isinstance(tokens[0], tuple):
+    first_token = tokens[0]
+    if isinstance(first_token, tuple):
         return tokens
-    return [(tokens[i], tokens[i + 1]) for i in range(len(tokens) - 1)]
+    # Use zip for faster bigram construction and preallocate result list for improved efficiency
+    result = list(zip(tokens, tokens[1:]))
+    return result
 
 
 class RadixCache(BasePrefixCache):
