@@ -93,7 +93,9 @@ class CombineInputChecker:
     def format_is_deepep_normal(
         combine_input: CombineInput,
     ) -> TypeGuard[DeepEPNormalCombineInput]:
-        return combine_input.format == CombineInputFormat.DEEPEP_NORMAL
+        # Cache attribute lookup for slight performance improvement
+        fmt = combine_input.format
+        return fmt is CombineInputFormat.DEEPEP_NORMAL
 
     @staticmethod
     def format_is_deepep_ll(
