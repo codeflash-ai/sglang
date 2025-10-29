@@ -290,9 +290,10 @@ class CompletionResponseStreamChoice(BaseModel):
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
+        # Avoid an unnecessary dictionary copy if hidden_states is not set
         data = handler(self)
-        if self.hidden_states is None:
-            data.pop("hidden_states", None)
+        if self.hidden_states is None and "hidden_states" in data:
+            del data["hidden_states"]
         return data
 
 
