@@ -9,6 +9,8 @@ import torch
 import triton
 import triton.language as tl
 
+_cached_attention_block_size = None
+
 __all__ = [
     "set_batch_invariant_mode",
     "is_batch_invariant_mode_enabled",
@@ -544,4 +546,7 @@ AttentionBlockSize = namedtuple("AttentionBlockSize", ["block_m", "block_n"])
 
 
 def get_batch_invariant_attention_block_size() -> AttentionBlockSize:
-    return AttentionBlockSize(block_m=16, block_n=16)
+    global _cached_attention_block_size
+    if _cached_attention_block_size is None:
+        _cached_attention_block_size = AttentionBlockSize(block_m=16, block_n=16)
+    return _cached_attention_block_size
