@@ -35,6 +35,23 @@ from sglang.srt.utils.hf_transformers_utils import (
 )
 from sglang.utils import is_in_ci
 
+_NON_GENERATION_ARCHS = {
+    "LlamaEmbeddingModel",
+    "MistralModel",
+    "LlamaForSequenceClassification",
+    "LlamaForSequenceClassificationWithNormal_Weights",
+    "InternLM2ForRewardModel",
+    "Qwen2ForRewardModel",
+    "Qwen2ForSequenceClassification",
+    "Qwen3ForSequenceClassification",
+    "CLIPModel",
+    "BertModel",
+    "Contriever",
+    "BertForSequenceClassification",
+    "XLMRobertaModel",
+    "XLMRobertaForSequenceClassification",
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -807,22 +824,8 @@ def is_generation_model(model_architectures: List[str], is_embedding: bool = Fal
     # 1. Check the model architecture
     # 2. check the `is_embedding` server args
 
-    if (
-        "LlamaEmbeddingModel" in model_architectures
-        or "MistralModel" in model_architectures
-        or "LlamaForSequenceClassification" in model_architectures
-        or "LlamaForSequenceClassificationWithNormal_Weights" in model_architectures
-        or "InternLM2ForRewardModel" in model_architectures
-        or "Qwen2ForRewardModel" in model_architectures
-        or "Qwen2ForSequenceClassification" in model_architectures
-        or "Qwen3ForSequenceClassification" in model_architectures
-        or "CLIPModel" in model_architectures
-        or "BertModel" in model_architectures
-        or "Contriever" in model_architectures
-        or "BertForSequenceClassification" in model_architectures
-        or "XLMRobertaModel" in model_architectures
-        or "XLMRobertaForSequenceClassification" in model_architectures
-    ):
+    # Set intersection is faster for longer lists and supports efficient membership tests.
+    if _NON_GENERATION_ARCHS.intersection(model_architectures):
         return False
     else:
         return not is_embedding
