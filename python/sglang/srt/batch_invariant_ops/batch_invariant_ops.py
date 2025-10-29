@@ -504,18 +504,21 @@ def is_batch_invariant_mode_enabled():
 
 
 def enable_batch_invariant_mode():
+    # Fast check to avoid repeated expensive initialization
     global _batch_invariant_MODE, _batch_invariant_LIB
     if _batch_invariant_MODE:
         return
 
+    # Set mode TRUE and initialize once
     _batch_invariant_MODE = True
+
+    # Lazy singleton initialization, only done once
     _batch_invariant_LIB = torch.library.Library("aten", "IMPL")
-    _batch_invariant_LIB.impl("aten::mm", mm_batch_invariant, "CUDA")
-    _batch_invariant_LIB.impl("aten::addmm", addmm_batch_invariant, "CUDA")
-    _batch_invariant_LIB.impl(
-        "aten::_log_softmax", _log_softmax_batch_invariant, "CUDA"
-    )
-    _batch_invariant_LIB.impl("aten::mean.dim", mean_batch_invariant, "CUDA")
+    impl = _batch_invariant_LIB.impl
+    impl("aten::mm", mm_batch_invariant, "CUDA")
+    impl("aten::addmm", addmm_batch_invariant, "CUDA")
+    impl("aten::_log_softmax", _log_softmax_batch_invariant, "CUDA")
+    impl("aten::mean.dim", mean_batch_invariant, "CUDA")
 
 
 def disable_batch_invariant_mode():
