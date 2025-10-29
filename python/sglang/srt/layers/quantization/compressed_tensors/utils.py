@@ -8,6 +8,8 @@ from typing import Iterable, List, Mapping, Optional
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
+_regex_cache: dict[str, re.Pattern] = {}
+
 
 def is_activation_quantization_format(format: str) -> bool:
     _ACTIVATION_QUANTIZATION_FORMATS = [
@@ -163,7 +165,9 @@ def _is_equal_or_regex_match(
 
     if target.startswith("re:"):
         pattern = target[3:]
-        if re.match(pattern, value):
+        if pattern not in _regex_cache:
+            _regex_cache[pattern] = re.compile(pattern)
+        if _regex_cache[pattern].match(value):
             return True
     elif check_contains:
         if target.lower() in value.lower():
