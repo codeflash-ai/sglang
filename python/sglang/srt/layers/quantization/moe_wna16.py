@@ -43,8 +43,7 @@ def get_weight_perm(num_bits: int):
                 2 * (i % 4 + 4) + 1,
             ]:
                 perm1.append(16 * row + col + 8 * block)
-        for j in range(4):
-            perm_list.extend([p + 256 * j for p in perm1])
+        perm_list.extend([p + 256 * j for j in range(4) for p in perm1])
 
     perm = np.array(perm_list)
 
