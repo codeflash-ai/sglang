@@ -49,7 +49,4 @@ def generate_buckets(
 
 
 def exponential_buckets(start: float, width: float, length: int) -> List[float]:
-    buckets = []
-    for i in range(length):
-        buckets.append(start * (width**i))
-    return buckets
+    return [start * (width ** i) for i in range(length)]
