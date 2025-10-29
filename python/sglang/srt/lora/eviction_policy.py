@@ -114,7 +114,7 @@ class FIFOEvictionPolicy(EvictionPolicy):
             return BASE_MODEL_UID
 
         # Iterate through insertion_order (oldest first) to find FIFO victim
-        for uid in list(self.insertion_order.keys()):
+        for uid in self.insertion_order:
             if uid in candidates:
                 logger.debug(f"Selected LoRA {uid} for eviction (FIFO)")
                 self.eviction_count += 1
