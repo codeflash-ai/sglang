@@ -1017,17 +1017,22 @@ def compute_position_kernel(
 def compute_position_torch(
     extend_prefix_lens: torch.Tensor, extend_seq_lens: torch.Tensor
 ):
-    positions = torch.cat(
-        [
-            torch.arange(
-                prefix_len, prefix_len + extend_len, device=extend_prefix_lens.device
-            )
-            for prefix_len, extend_len in zip(extend_prefix_lens, extend_seq_lens)
-        ],
-        axis=0,
-    )
+    # Vectorized implementation to compute positions and extend_start_loc efficiently
+    batch_size = extend_seq_lens.shape[0]
+    device = extend_seq_lens.device
+    extend_seq_lens_sum = extend_seq_lens.sum().item()
+    # Compute start locations for each sequence in the flattened positions.
     extend_start_loc = torch.zeros_like(extend_seq_lens)
-    extend_start_loc[1:] = torch.cumsum(extend_seq_lens[:-1], dim=0)
+    if batch_size > 1:
+        extend_start_loc[1:] = torch.cumsum(extend_seq_lens[:-1], dim=0)
+    # For all positions, get batch id for each token position
+    position_indices = torch.arange(extend_seq_lens_sum, device=device)
+    # Map position_indices to their batch id using extend_start_loc
+    # positions_i belongs to batch where extend_start_loc[i] <= idx < extend_start_loc[i]+extend_seq_lens[i]
+    # Use torch.searchsorted for efficient mapping
+    batch_idx = torch.searchsorted(extend_start_loc, position_indices, right=True) - 1
+    # positions = prefix_len[batch_idx] + (position_indices - extend_start_loc[batch_idx])
+    positions = extend_prefix_lens[batch_idx] + (position_indices - extend_start_loc[batch_idx])
     return positions.to(torch.int64), extend_start_loc
 
 
