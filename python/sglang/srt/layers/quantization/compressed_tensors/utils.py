@@ -8,6 +8,9 @@ from typing import Iterable, List, Mapping, Optional
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
+# Compiled regex cache for performance
+_regex_cache: dict[str, re.Pattern] = {}
+
 
 def is_activation_quantization_format(format: str) -> bool:
     _ACTIVATION_QUANTIZATION_FORMATS = [
@@ -146,8 +149,23 @@ def _find_first_match(
     :param check_contains: whether or not to do a substring match
     """
 
+    # If check_contains, precompute lowercase version once for efficiency
+    value_lower = value.lower() if check_contains else None
     for target in targets:
-        if _is_equal_or_regex_match(value, target, check_contains=check_contains):
+        # If check_contains, pass precomputed value_lower as a temporary attribute
+        # Otherwise, function logic is unchanged.
+        if target.startswith("re:"):
+            pattern = target[3:]
+            compiled = _regex_cache.get(pattern)
+            if compiled is None:
+                compiled = re.compile(pattern)
+                _regex_cache[pattern] = compiled
+            if compiled.match(value):
+                return target
+        elif check_contains:
+            if target.lower() in value_lower:
+                return target
+        elif target == value:
             return target
     return None
 
