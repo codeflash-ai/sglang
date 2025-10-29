@@ -131,9 +131,14 @@ class EBNFComposer:
     @staticmethod
     def get_type_mapping(function_format: str) -> Dict[str, str]:
         """Get the complete type mapping for a given format."""
+        overrides = EBNFComposer.FORMAT_TYPE_OVERRIDES.get(function_format)
+        if not overrides:
+            return EBNFComposer.BASE_TYPE_MAPPING.copy()
+        
         mapping = EBNFComposer.BASE_TYPE_MAPPING.copy()
-        overrides = EBNFComposer.FORMAT_TYPE_OVERRIDES.get(function_format, {})
-        mapping.update({k: v for k, v in overrides.items() if v is not None})
+        for k, v in overrides.items():
+            if v is not None:
+                mapping[k] = v
         return mapping
 
     @staticmethod
