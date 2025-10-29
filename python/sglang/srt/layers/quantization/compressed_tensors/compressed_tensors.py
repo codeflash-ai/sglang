@@ -254,20 +254,29 @@ class CompressedTensorsConfig(QuantizationConfig):
     def _is_static_tensor_w8a8(
         self, weight_quant: BaseModel, input_quant: BaseModel
     ) -> bool:
-        is_8_bits = weight_quant.num_bits == input_quant.num_bits == 8
-        weight_strategy = (
-            weight_quant.strategy == QuantizationStrategy.TENSOR.value
-            or weight_quant.strategy == QuantizationStrategy.CHANNEL.value
-        )
-        is_tensor = (
-            weight_strategy
-            and input_quant.strategy == QuantizationStrategy.TENSOR.value
-        )
-        is_static = not weight_quant.dynamic and not input_quant.dynamic
+        # Optimization: combine checks and avoid repeated attribute lookups.
+        num_bits = weight_quant.num_bits
+        weight_strategy = weight_quant.strategy
+        input_strategy = input_quant.strategy
+        input_num_bits = input_quant.num_bits
+        symmetric = weight_quant.symmetric
+        weight_dynamic = weight_quant.dynamic
+        input_dynamic = input_quant.dynamic
 
-        # Both symmetric and asymmetric input quantization supported.
-        # Only symmetric weight quantization supported.
-        return is_8_bits and is_tensor and weight_quant.symmetric and is_static
+        if num_bits != 8 or input_num_bits != 8:
+            return False
+        if not (
+            weight_strategy == QuantizationStrategy.TENSOR.value
+            or weight_strategy == QuantizationStrategy.CHANNEL.value
+        ):
+            return False
+        if input_strategy != QuantizationStrategy.TENSOR.value:
+            return False
+        if not symmetric:
+            return False
+        if weight_dynamic or input_dynamic:
+            return False
+        return True
 
     def _is_dynamic_token_w8a8(
         self, weight_quant: BaseModel, input_quant: BaseModel
