@@ -87,7 +87,8 @@ class CombineInputChecker:
     def format_is_standard(
         combine_input: CombineInput,
     ) -> TypeGuard[StandardCombineInput]:
-        return combine_input.format == CombineInputFormat.STANDARD
+        # Use direct comparison to enum constant, no change needed for performance
+        return combine_input.format is CombineInputFormat.STANDARD  # 'is' comparison is faster for enums
 
     @staticmethod
     def format_is_deepep_normal(
