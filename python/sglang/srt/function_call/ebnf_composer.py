@@ -185,7 +185,7 @@ class EBNFComposer:
                 based on function_format will be used.
             key_value_separator: Raw EBNF fragment inserted between key-value pairs.
                 This string is used verbatim (not auto-quoted). Pass:
-                - Quoted terminals when you need a literal token (e.g. '","' or '"\\n"').
+                - Quoted terminals when you need a literal token (e.g. '","' or '"\n"').
                 - Raw/non-terminals when you need grammar tokens (e.g. 'ws "," ws').
         """
         # =================================================================
@@ -201,7 +201,6 @@ class EBNFComposer:
         if tool_call_separator is not None:
             base_pattern = f'{function_call_unit} ( "{tool_call_separator}" {function_call_unit} )*'
         else:
-            # Assume only support single function call
             base_pattern = function_call_unit
 
         # Apply sequence-level wrapping if needed
@@ -236,6 +235,9 @@ class EBNFComposer:
             else EBNFComposer.KEY_VALUE_RULE_MAP[function_format]
         )
 
+        # Pre-cache references for tighter loops
+        get_value_rule = EBNFComposer.get_value_rule
+
         # =================================================================
         # Step 4: Build rules for each tool
         # =================================================================
@@ -243,84 +245,61 @@ class EBNFComposer:
             tool_name = tool.function.name
             params = tool.function.parameters or {}
             properties = params.get("properties", {})
-            required_props = set(params.get("required", []))
-
-            # The generated pattern ensures:
-            # 1. Required properties appear first, joined by commas
-            # 2. Optional properties are wrapped with comma included: ( "," ( "prop" : value )? )?
-            # 3. For multiple optional properties, we allow flexible ordering:
-            #    - Each optional can be skipped entirely
-            #    - They can appear in any combination
-            #
-            # Example patterns generated:
-            # - One required, one optional:
-            #   "{" "location" ":" string ( "," ( "unit" ":" enum ) )? "}"
-            #   Allows: {"location": "Paris"} or {"location": "Paris", "unit": "celsius"}
-            #
-            # - Multiple optional properties with flexible ordering:
-            #   "{" "req" ":" string ( "," ( "opt1" ":" value ( "," "opt2" ":" value )? | "opt2" ":" value ) )? "}"
-            #   Allows: {"req": "x"}, {"req": "x", "opt1": "y"}, {"req": "x", "opt2": "z"},
-            #           {"req": "x", "opt1": "y", "opt2": "z"}
-            #
-            # - All optional properties with flexible ordering:
-            #   "{" ( "opt1" ":" value ( "," "opt2" ":" value )? | "opt2" ":" value )? "}"
-            #   Allows: {}, {"opt1": "x"}, {"opt2": "y"}, {"opt1": "x", "opt2": "y"}
+            required_props = set(params.get("required", ()))
 
             prop_kv_pairs = {}
             ordered_props = list(properties.keys())
-
-            for prop_name, prop_schema in properties.items():
-                value_rule = EBNFComposer.get_value_rule(prop_schema, function_format)
-                # Create key=value pair
-                pair = key_value_template.format(key=prop_name, valrule=value_rule)
+            # Precompute key-value pairs in a single loop for order efficiency
+            for prop_name in ordered_props:
+                pair = key_value_template.format(
+                    key=prop_name, valrule=get_value_rule(properties[prop_name], function_format)
+                )
                 prop_kv_pairs[prop_name] = pair
 
-            # Separate into required and optional while preserving order
-            required = [p for p in ordered_props if p in required_props]
-            optional = [p for p in ordered_props if p not in required_props]
+            required = []
+            optional = []
+            # Avoid repeated lookups and keep order
+            for prop in ordered_props:
+                if prop in required_props:
+                    required.append(prop)
+                else:
+                    optional.append(prop)
 
-            # Build the combined rule
             rule_parts = []
 
             # Add required properties joined by commas
             if required:
+                # Use list comprehension for join efficiency
                 rule_parts.append(
                     f" {key_value_separator} ".join(prop_kv_pairs[k] for k in required)
                 )
 
             # Add optional properties with flexible ordering
             if optional:
-                # Build alternatives where any optional property can appear first
+                # Prebuild alternatives in one loop
                 opt_alternatives = []
-                for i in range(len(optional)):
-                    # Build pattern for optional[i] appearing first
-                    opt_parts = []
-                    for j in range(i, len(optional)):
-                        if j == i:
-                            opt_parts.append(prop_kv_pairs[optional[j]])
-                        else:
-                            opt_parts.append(
-                                f" ( {key_value_separator} {prop_kv_pairs[optional[j]]} )?"
-                            )
+                n_opt = len(optional)
+                for i in range(n_opt):
+                    # Use preallocated list and string joins for minimized temporaries
+                    opt_parts = [prop_kv_pairs[optional[i]]]
+                    for j in range(i + 1, n_opt):
+                        opt_parts.append(
+                            f" ( {key_value_separator} {prop_kv_pairs[optional[j]]} )?"
+                        )
                     opt_alternatives.append("".join(opt_parts))
 
-                # Wrap with appropriate comma handling based on whether we have required properties
+                # Only keep one string join
+                opt_block = " | ".join(opt_alternatives)
                 if required:
-                    # Required properties exist, so optional group needs outer comma
-                    rule_parts.append(f" ( {key_value_separator} ( ")
-                    rule_parts.append(" | ".join(opt_alternatives))
-                    rule_parts.append(" ) )?")
+                    rule_parts.append(f" ( {key_value_separator} ( {opt_block} ) )?")
                 else:
-                    # All properties are optional
-                    rule_parts.append("( ")
-                    rule_parts.append(" | ".join(opt_alternatives))
-                    rule_parts.append(" )?")
+                    rule_parts.append(f"( {opt_block} )?")
 
             combined_args = "".join(rule_parts)
             arguments_rule = args_template.format(arg_rules=combined_args)
-            arguments_rule = arguments_rule or '""'
+            if not arguments_rule:
+                arguments_rule = '""'
 
-            # Add the function call rule and its arguments rule
             ebnf_lines.append(
                 call_template.format(
                     name=tool_name, arguments_rule=f"arguments_{tool_name}"
@@ -336,6 +315,7 @@ class EBNFComposer:
             "json": EBNFComposer.json_grammar_ebnf_str,
             "xml": EBNFComposer.xml_grammar_ebnf_str,
         }
+        # Avoid redundant dictionary lookup
         base_grammar = grammar_dict.get(
             function_format, EBNFComposer.json_grammar_ebnf_str
         )
