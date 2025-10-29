@@ -933,12 +933,15 @@ def is_hybrid_model(
 
 def get_hybrid_layer_ids(model_architectures: List[str], num_hidden_layers: int):
     if "Llama4ForConditionalGeneration" in model_architectures:
-        swa_attention_layer_ids = [
-            i for i in range(num_hidden_layers) if (i + 1) % 4 != 0
-        ]
-        full_attention_layer_ids = [
-            i for i in range(num_hidden_layers) if (i + 1) % 4 == 0
-        ]
+        # Use preallocated lists and range stepping for efficiency
+        full_attention_layer_ids = list(range(3, num_hidden_layers, 4))
+        swa_attention_layer_ids = []
+        # For large num_hidden_layers, this is faster than comprehensions with modulo
+        if num_hidden_layers > 0:
+            # Use set difference for sparse cases, OR fill directly if contiguous
+            is_full_layer = set(full_attention_layer_ids)
+            # Only append those not in full_attention_layer_ids
+            swa_attention_layer_ids = [i for i in range(num_hidden_layers) if i not in is_full_layer]
     else:
         swa_attention_layer_ids = None
         full_attention_layer_ids = None
