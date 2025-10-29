@@ -8,6 +8,8 @@ from typing import Iterable, List, Mapping, Optional
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
+_is_equal_or_regex_match_pattern_cache = {}
+
 
 def is_activation_quantization_format(format: str) -> bool:
     _ACTIVATION_QUANTIZATION_FORMATS = [
@@ -163,7 +165,11 @@ def _is_equal_or_regex_match(
 
     if target.startswith("re:"):
         pattern = target[3:]
-        if re.match(pattern, value):
+        compiled = _is_equal_or_regex_match_pattern_cache.get(pattern)
+        if compiled is None:
+            compiled = re.compile(pattern)
+            _is_equal_or_regex_match_pattern_cache[pattern] = compiled
+        if compiled.match(value):
             return True
     elif check_contains:
         if target.lower() in value.lower():
@@ -202,13 +208,19 @@ def _match_fused_layer(
 
     # expand path of unfused components
     unfused_paths = [
-        layer_name.replace(fused, unfused) for unfused in fused_mapping[fused]
+        layer_name.replace(fused, unfused, 1) for unfused in fused_mapping[fused]
     ]
 
-    # for each unfused component, find a match in targets
+    # Convert target_layers to a tuple for faster repeated access (and allow indexing)
+    targets_tuple = tuple(target_layers)
+
     unfused_matches: List[Optional[str]] = []
     for unfused in unfused_paths:
-        for target in target_layers:
+        # Try fast exact match first
+        if unfused in targets_tuple:
+            unfused_matches.append(unfused)
+            continue
+        for target in targets_tuple:
             if _is_equal_or_regex_match(unfused, target):
                 unfused_matches.append(target)
                 break
