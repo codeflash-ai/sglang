@@ -8,13 +8,16 @@ from typing import Iterable, List, Mapping, Optional
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
-
-def is_activation_quantization_format(format: str) -> bool:
-    _ACTIVATION_QUANTIZATION_FORMATS = [
+_ACTIVATION_QUANTIZATION_FORMATS = frozenset(
+    (
         CompressionFormat.naive_quantized.value,
         CompressionFormat.int_quantized.value,
         CompressionFormat.float_quantized.value,
-    ]
+    )
+)
+
+
+def is_activation_quantization_format(format: str) -> bool:
     return format in _ACTIVATION_QUANTIZATION_FORMATS
 
 
