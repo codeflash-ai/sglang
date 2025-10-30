@@ -115,7 +115,7 @@ class Qwen25Detector(BaseFormatDetector):
 
     def structure_info(self) -> _GetInfoFunc:
         return lambda name: StructureInfo(
-            begin='<tool_call>\n{"name":"' + name + '", "arguments":',
+            begin=f'<tool_call>\n{{"name":"{name}", "arguments":',
             end="}\n</tool_call>",
             trigger="<tool_call>",
         )
