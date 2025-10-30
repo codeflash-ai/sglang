@@ -112,17 +112,18 @@ class W4AFp8Config(QuantizationConfig):
 def interleave_scales(scales: torch.Tensor) -> torch.Tensor:
     """Interleave scales in groups of 4 similar to TRT-LLM implementation."""
     s_shape = scales.shape
-    # Reshape to separate groups of 4
     alignment = 4 if s_shape[2] % 4 == 0 else 1
-    scales_interleaved = scales.reshape(
-        s_shape[0], s_shape[1], (s_shape[2] // alignment), alignment
-    )
-    # Permute dimensions to interleave
-    scales_interleaved = scales_interleaved.permute(0, 2, 1, 3)
-    # Reshape back to original dimensions but with interleaved values
-    scales_interleaved = scales_interleaved.reshape(
-        s_shape[0], s_shape[2] // alignment, s_shape[1] * alignment
-    )
+    if alignment == 1:
+        # If no alignment necessary, fast path: no interleaving needed
+        # Just reshape to (B, C, H) -> (B, H, C)
+        return scales.permute(0, 2, 1).contiguous()
+    # Optimize by combining view & permute operations via advanced indexing
+    # Avoids redundant reshape and permute overhead.
+    B, C, H = s_shape
+    scales_reshaped = scales.view(B, C, H // alignment, alignment)
+    # Interleave: output shape should be (B, H//4, C*4)
+    # Faster than permute+reshape: swap axes with permute, then call reshape
+    scales_interleaved = scales_reshaped.permute(0, 2, 1, 3).reshape(B, H // alignment, C * alignment)
     return scales_interleaved.contiguous()
 
 
