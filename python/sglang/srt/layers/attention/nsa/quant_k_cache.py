@@ -41,27 +41,13 @@ def _quantize_k_cache_slow(
     result_k_rope_part = result[..., dv + num_tiles * 4 :].view(input_k_cache.dtype)
     result_k_rope_part[:] = input_k_cache[..., dv:]
 
-    for tile_idx in range(0, num_tiles):
-        cur_scale_factors_inv = (
-            torch.abs(
-                input_k_cache[..., tile_idx * tile_size : (tile_idx + 1) * tile_size]
-            )
-            .max(dim=-1)
-            .values
-            / 448.0
-        )  # [num_blocks, block_size]
-        result_k_scale_factor[:, :, tile_idx] = cur_scale_factors_inv
+    # Vectorized computation for all tiles at once
+    chopped = input_k_cache[..., :dv].unfold(-1, tile_size, tile_size)
+    cur_scale_factors_inv = chopped.abs().max(dim=-1).values / 448.0
+    result_k_scale_factor[...] = cur_scale_factors_inv
 
-        cur_scale_factors_inv.unsqueeze_(-1)  # [num_blocks, block_size, 1]
-        cur_quantized_nope = (
-            input_k_cache[
-                ..., tile_idx * tile_size : (tile_idx + 1) * tile_size
-            ].float()
-            / cur_scale_factors_inv.float()
-        ).to(torch.float8_e4m3fn)
-        result_k_nope_part[..., tile_idx * tile_size : (tile_idx + 1) * tile_size] = (
-            cur_quantized_nope
-        )
+    quantized_nope = (chopped.float() / cur_scale_factors_inv.float().unsqueeze(-1)).to(torch.float8_e4m3fn)
+    result_k_nope_part.copy_(quantized_nope.flatten(-2, -1))
 
     result = result.view(num_blocks, block_size, 1, -1)
     return result
