@@ -105,7 +105,9 @@ def per_tensor_dequantize(
 
 def all_close_1d(x: torch.Tensor) -> bool:
     assert len(x.shape) == 1
-    return all(torch.allclose(x[0], x[i]) for i in range(x.shape[0]))
+    if x.shape[0] == 0:
+        return True
+    return torch.allclose(x, torch.full_like(x, x[0]))
 
 
 def convert_to_channelwise(
