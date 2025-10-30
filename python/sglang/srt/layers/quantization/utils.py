@@ -12,9 +12,14 @@ import torch
 
 from sglang.srt.layers.quantization.fp8_kernel import scaled_fp8_quant
 from sglang.srt.utils import is_cuda
+import threading
 
 if TYPE_CHECKING:
     from sglang.srt.layers.quantization.base_config import QuantizationConfig
+
+_complied_cache_lock = threading.Lock()
+
+_compiled_cache = {}
 
 
 def get_scalar_types():
@@ -250,14 +255,24 @@ def get_dynamic_override(
     key: Optional[str] = None,
     default_value: Union[int, bool, None] = None,
 ) -> Union[Dict, int, bool, None]:
-    for pattern, pattern_dict in config.dynamic.items():
-        # Negative match: matched modules are excluded from quantized init
-        if pattern.startswith("-:"):
-            if re.match(pattern.removeprefix("-:"), layer_name):
+    cache_key = id(config)
+    compiled_patterns = _compiled_cache.get(cache_key)
+    if compiled_patterns is None:
+        # Thread-safe initialization of compiled patterns
+        with _complied_cache_lock:
+            # Double-checked locking
+            compiled_patterns = _compiled_cache.get(cache_key)
+            if compiled_patterns is None:
+                compiled_patterns = _compile_dynamic_patterns(config.dynamic)
+                _compiled_cache[cache_key] = compiled_patterns
+
+    for kind, cregex, pattern_dict in compiled_patterns:
+        # "Negative" match: matched modules are excluded from quantized init
+        if kind == '-':
+            if cregex.match(layer_name):
                 return False
-        # Positive match: matched modules have quant properties overrides
-        # base quant config
-        elif re.match(pattern.removeprefix("+:"), layer_name):
+        # "Positive" match: matched modules have quant properties overrides
+        elif cregex.match(layer_name):
             if key is None:
                 return pattern_dict
             else:
@@ -562,3 +577,22 @@ def sort_weights(q_w: torch.Tensor, g_idx: torch.Tensor):
         g_idx.to(device=orig_device),
         sort_indices.to(device=orig_device),
     )
+
+
+# Pre-compile regex patterns and store along with their corresponding config dicts
+def _compile_dynamic_patterns(dynamic: Dict[str, Dict]) -> list:
+    compiled_patterns = []
+    for pattern, pattern_dict in dynamic.items():
+        if pattern.startswith("-:"):
+            kind = '-'
+            raw_pattern = pattern[2:]
+        elif pattern.startswith("+:"):
+            kind = '+'
+            raw_pattern = pattern[2:]
+        else:
+            # If pattern does not start with known prefixes, treat as positive pattern
+            kind = '+'
+            raw_pattern = pattern
+        # Compile the regex once per pattern
+        compiled_patterns.append((kind, re.compile(raw_pattern), pattern_dict))
+    return compiled_patterns
