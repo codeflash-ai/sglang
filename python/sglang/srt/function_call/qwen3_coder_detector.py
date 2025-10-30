@@ -57,6 +57,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
         )
         self._buf: str = ""
 
+        # Compile frequently used regex pattern ONLY ONCE for function name extraction
+        self.function_name_pattern = re.compile(r"<function=([^>]+)>")
+
         # Streaming state variables
         self._current_function_name: str = ""
         self._current_parameters: Dict[str, Any] = {}
@@ -84,8 +87,18 @@ class Qwen3CoderDetector(BaseFormatDetector):
         if not hasattr(self, "_tool_indices"):
             self._tool_indices = self._get_tool_indices(tools)
 
+        # Pre-allocate tracking structures for optimal repetitive append in streaming
+        if hasattr(self, "current_tool_id") and self.current_tool_id > -1:
+            required_length = self.current_tool_id + 2  # Account for next possible tool call (current + upcoming)
+            prev_len = len(self.prev_tool_call_arr)
+            streamed_len = len(self.streamed_args_for_tool)
+            if prev_len < required_length:
+                self.prev_tool_call_arr.extend([{}] * (required_length - prev_len))
+            if streamed_len < required_length:
+                self.streamed_args_for_tool.extend([""] * (required_length - streamed_len))
+
         while True:
-            # If we're not in a tool call and don't see a start token, return normal text
+            # If not in a tool call and don't see a start token, return normal text
             if not self._in_tool_call and self.tool_call_start_token not in self._buf:
                 normal += self._buf
                 self._buf = ""
@@ -114,8 +127,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
             # We're in a tool call, try to parse function name if not sent yet
             if not self._function_name_sent:
-                # Look for function name pattern: <function=name>
-                function_match = re.search(r"<function=([^>]+)>", self._buf)
+                function_match = self.function_name_pattern.search(self._buf)
                 if function_match:
                     function_name = function_match.group(1).strip()
 
@@ -128,11 +140,14 @@ class Qwen3CoderDetector(BaseFormatDetector):
                         if self.current_tool_id == -1:
                             self.current_tool_id = 0
 
-                        # Ensure tracking arrays are large enough
-                        while len(self.prev_tool_call_arr) <= self.current_tool_id:
-                            self.prev_tool_call_arr.append({})
-                        while len(self.streamed_args_for_tool) <= self.current_tool_id:
-                            self.streamed_args_for_tool.append("")
+                        # Ensure tracking arrays are large enough for this tool id
+                        required_length = self.current_tool_id + 1
+                        prev_len = len(self.prev_tool_call_arr)
+                        streamed_len = len(self.streamed_args_for_tool)
+                        if prev_len < required_length:
+                            self.prev_tool_call_arr.extend([{}] * (required_length - prev_len))
+                        if streamed_len < required_length:
+                            self.streamed_args_for_tool.extend([""] * (required_length - streamed_len))
 
                         # Store tool call info
                         self.prev_tool_call_arr[self.current_tool_id] = {
@@ -163,32 +178,36 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     # Function name not complete yet, wait for more text
                     break
 
-            # Parse parameters incrementally
+            # Parse parameters incrementally (pass only up to end token for efficiency if present)
             if self._function_name_sent:
-                # Process parameters and get any calls to emit
-                parameter_calls = self._parse_and_stream_parameters(self._buf)
+                buf_to_parse = self._buf
+                end_token_index = self._buf.find(self.tool_call_end_token)
+                if end_token_index != -1:
+                    buf_to_parse = self._buf[:end_token_index]
+                parameter_calls = self._parse_and_stream_parameters(buf_to_parse)
                 calls.extend(parameter_calls)
 
                 # Check if tool call is complete
-                if self.tool_call_end_token in self._buf:
-                    end_pos = self._buf.find(self.tool_call_end_token)
+                if end_token_index != -1:
+                    end_pos = end_token_index
 
                     # Add closing brace to complete the JSON object
                     current_streamed = self.streamed_args_for_tool[self.current_tool_id]
                     if current_streamed:
-                        # Count opening and closing braces to check if JSON is complete
+                        # Only count braces once and use a single difference variable
                         open_braces = current_streamed.count("{")
                         close_braces = current_streamed.count("}")
-                        if open_braces > close_braces:
+                        missing_closes = open_braces - close_braces
+                        if missing_closes > 0:
                             calls.append(
                                 ToolCallItem(
                                     tool_index=self.current_tool_id,
                                     name=None,
-                                    parameters="}",
+                                    parameters="}" * missing_closes,
                                 )
                             )
                             self.streamed_args_for_tool[self.current_tool_id] = (
-                                current_streamed + "}"
+                                current_streamed + "}" * missing_closes
                             )
 
                     # Complete the tool call
