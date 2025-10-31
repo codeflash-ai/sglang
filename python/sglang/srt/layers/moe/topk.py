@@ -649,8 +649,9 @@ def _mask_topk_ids_padded_region(
 ):
     if num_token_non_padded is None:
         return
-    indices = torch.arange(0, topk_ids.shape[0], device=topk_ids.device)
-    topk_ids[indices >= num_token_non_padded, :] = -1
+    start = int(num_token_non_padded)
+    if start < topk_ids.shape[0]:
+        topk_ids[start:, :] = -1
 
 
 @torch.compile(dynamic=True, backend=get_compiler_backend())
