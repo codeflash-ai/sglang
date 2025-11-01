@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 class TboAttnBackend(AttentionBackend):
+
     def __init__(self, primary: AttentionBackend, children: List[AttentionBackend]):
         super().__init__()
         self.primary = primary
@@ -20,7 +21,7 @@ class TboAttnBackend(AttentionBackend):
     def init_new(cls, creator: Callable[[], AttentionBackend]):
         return cls(
             primary=creator(),
-            children=[creator() for _ in range(2)],
+            children=[creator(), creator()],
         )
 
     def init_forward_metadata(self, forward_batch: "ForwardBatch"):
