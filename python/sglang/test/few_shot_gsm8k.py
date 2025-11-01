@@ -20,17 +20,22 @@ INVALID = -9999999
 
 
 def get_one_example(lines, i, include_answer):
-    ret = "Question: " + lines[i]["question"] + "\nAnswer:"
     if include_answer:
-        ret += " " + lines[i]["answer"]
-    return ret
+        return "".join([
+            "Question: ", lines[i]["question"], "\nAnswer: ", lines[i]["answer"]
+        ])
+    else:
+        return "".join([
+            "Question: ", lines[i]["question"], "\nAnswer:"
+        ])
 
 
 def get_few_shot_examples(lines, k):
-    ret = ""
+    # Preallocate list for more efficient concatenation
+    examples = []
     for i in range(k):
-        ret += get_one_example(lines, i, True) + "\n\n"
-    return ret
+        examples.append(get_one_example(lines, i, True))
+    return "\n\n".join(examples) + ("\n\n" if k > 0 else "")
 
 
 def get_answer_value(answer_str):
