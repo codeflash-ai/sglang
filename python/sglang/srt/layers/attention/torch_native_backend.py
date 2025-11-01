@@ -143,39 +143,82 @@ class TorchNativeAttnBackend(AttentionBackend):
         # [num_tokens, num_heads, head_size] -> [num_heads, num_tokens, head_size]
         query = query.movedim(0, query.dim() - 2)
 
+
+        num_seqs = seq_lens.shape[0]
+        seq_len_kvs = seq_lens.tolist()
+        req_pool_idx_list = req_pool_indices.tolist()
+
+        # Preallocate lists for batch requests
+        batch_queries = []
+        batch_keys = []
+        batch_values = []
+        batch_q_positions = []  # To know where to write per_req_outs
+
         start_q, start_kv = 0, 0
-        for seq_idx in range(seq_lens.shape[0]):
+        for seq_idx in range(num_seqs):
             # TODO: this loop process a sequence per iter, this is inefficient.
             # Need optimize the performance later.
 
             seq_len_q = 1
-            seq_len_kv = seq_lens[seq_idx]
+            seq_len_kv = seq_len_kvs[seq_idx]
             end_q = start_q + seq_len_q
             end_kv = start_kv + seq_len_kv
 
             per_req_query = query[:, start_q:end_q, :]
-
-            # get key and value from cache. per_req_tokens contains the kv cache
-            # index for each token in the sequence.
-            req_pool_idx = req_pool_indices[seq_idx]
+            req_pool_idx = req_pool_idx_list[seq_idx]
             per_req_tokens = req_to_token[req_pool_idx, :seq_len_kv]
             per_req_key = k_cache[per_req_tokens].movedim(0, query.dim() - 2)
             per_req_value = v_cache[per_req_tokens].movedim(0, query.dim() - 2)
 
-            per_req_out = (
+            batch_queries.append(per_req_query)
+            batch_keys.append(per_req_key)
+            batch_values.append(per_req_value)
+            batch_q_positions.append((start_q, end_q))
+
+            start_q, start_kv = end_q, end_kv
+
+        # Stack along new batch dimension
+        # All per_req_query have shape [num_heads, 1, head_size], per_req_key/val [num_heads, kv_len, head_size]
+        # As seq_len_q is always 1, we stack even variable kv-lens
+        # To batch efficiently, process in one go if all seq_len_kv are same; else fallback to original loop
+
+        all_same_kv_len = all(l == seq_len_kvs[0] for l in seq_len_kvs)
+        if all_same_kv_len:
+            q_batched = torch.stack(batch_queries, dim=0)  # [batch, num_heads, 1, head_size]
+            k_batched = torch.stack(batch_keys, dim=0)     # [batch, num_heads, kv_len, head_size]
+            v_batched = torch.stack(batch_values, dim=0)   # [batch, num_heads, kv_len, head_size]
+            per_req_outs = (
                 scaled_dot_product_attention(
-                    per_req_query.unsqueeze(0),
-                    per_req_key.unsqueeze(0),
-                    per_req_value.unsqueeze(0),
+                    q_batched,
+                    k_batched,
+                    v_batched,
                     enable_gqa=enable_gqa,
                     scale=scaling,
                     is_causal=causal,
                 )
-                .squeeze(0)
-                .movedim(query.dim() - 2, 0)
+                .movedim(2, 1)  # [batch, num_heads, 1, head_size] -> [batch, 1, num_heads, head_size]
+                .squeeze(1)     # [batch, num_heads, head_size]
             )
-            output[start_q:end_q, :, :] = per_req_out
-            start_q, start_kv = end_q, end_kv
+            for idx, (start_q, end_q) in enumerate(batch_q_positions):
+                # per_req_outs shape [batch, num_heads, head_size] needs to be [num_tokens, num_heads, head_size]
+                output[start_q:end_q, :, :] = per_req_outs[idx].movedim(0, 0)
+        else:
+            # Fallback for variable kv_len
+            for idx in range(num_seqs):
+                per_req_out = (
+                    scaled_dot_product_attention(
+                        batch_queries[idx].unsqueeze(0),
+                        batch_keys[idx].unsqueeze(0),
+                        batch_values[idx].unsqueeze(0),
+                        enable_gqa=enable_gqa,
+                        scale=scaling,
+                        is_causal=causal,
+                    )
+                    .squeeze(0)
+                    .movedim(query.dim() - 2, 0)
+                )
+                start_q, end_q = batch_q_positions[idx]
+                output[start_q:end_q, :, :] = per_req_out
 
         return output
 
