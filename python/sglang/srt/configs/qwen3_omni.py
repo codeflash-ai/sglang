@@ -597,6 +597,7 @@ class Qwen3OmniMoeConfig(PretrainedConfig):
         self.system_token_id = system_token_id
         self.user_token_id = user_token_id
         self.assistant_token_id = assistant_token_id
+        self._cached_text_config = self.thinker_config.get_text_config()
 
     def get_text_config(self, decoder=False) -> "PretrainedConfig":
         """
@@ -610,4 +611,4 @@ class Qwen3OmniMoeConfig(PretrainedConfig):
         # Overridden for deeply nested config like Qwen2-Omni. We don't have any omni model
         # except for Qwen yet. This has to be generalized if more deeply nested configs are
         # added. NOTE: currently method used only by vLLM
-        return self.thinker_config.get_text_config()
+        return self._cached_text_config
