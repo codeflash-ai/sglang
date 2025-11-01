@@ -99,12 +99,14 @@ class LoRARegistry:
             lora_name (str): The name of the LoRA model to unregister.
         """
         async with self._registry_lock.writer_lock:
-            lora_ref = self._registry.get(lora_name, None)
+            # Avoid double dictionary lookup by using pop.
+            lora_ref = self._registry.pop(lora_name, None)
             if lora_ref is None:
+                # .keys() returns a view, wrapping it with tuple for slightly faster repr (avoids dict_keys repr overhead).
+                loaded_names = tuple(self._registry.keys())
                 raise ValueError(
-                    f"LoRA with name {lora_name} does not exist. Loaded LoRAs: {self._registry.keys()}"
+                    f"LoRA with name {lora_name} does not exist. Loaded LoRAs: {loaded_names}"
                 )
-            del self._registry[lora_name]
 
         return lora_ref.lora_id
 
