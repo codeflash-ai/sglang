@@ -504,28 +504,35 @@ class HarmonyParser:
     def __init__(self):
         self.strategy = None
         self._buffer = ""
-        self._should_filter_commentary = (
-            False  # Track if we should filter commentary in next chunks
-        )
-        self._partial_commentary = (
-            ""  # Track partial commentary being built across chunks
-        )
+        self._should_filter_commentary = False
+        self._partial_commentary = ""
 
     def parse(self, chunk: str) -> List[Event]:
         self._buffer += chunk
 
         if self.strategy is None:
-            if "<|channel|>" in self._buffer or "<|start|>" in self._buffer:
+            # Use .find for faster substring presence check
+            buf = self._buffer
+            if "<|channel|>" in buf or "<|start|>" in buf:
                 self.strategy = CanonicalStrategy()
-            elif re.search(
-                r"(?:^|\s)(?:assistant)?\s*(analysis|commentary|assistantfinal)",
-                self._buffer,
-                re.IGNORECASE,
-            ):
-                self.strategy = TextStrategy()
             else:
-                # Not yet determined, hold
-                return []
+                # Use lower and .find for faster regex-like search in buffer
+                # This approach only for direct substring patterns; for complex patterns, compiled regex is necessary.
+                lbuf = buf.lower()
+                # Pre-filter with keyword before regex as a fast path
+                if (
+                    "analysis" in lbuf
+                    or "commentary" in lbuf
+                    or "assistantfinal" in lbuf
+                ):
+                    if re.search(
+                        r"(?:^|\s)(?:assistant)?\s*(analysis|commentary|assistantfinal)",
+                        buf,
+                        re.IGNORECASE,
+                    ):
+                        self.strategy = TextStrategy()
+                else:
+                    return []
 
         if hasattr(self.strategy, "set_buffer_context"):
             # Provide full buffer context to strategy for smarter whitespace handling
@@ -540,33 +547,33 @@ class HarmonyParser:
 
         # Filter events for streaming case
         filtered_events = []
+        # Cache attrs for faster local access during filtering loop
+        filter_commentary = self._should_filter_commentary
+        partial_commentary = self._partial_commentary
+
         for event in events:
             should_filter = False
 
             if event.event_type == "normal":
-                # Check if we're in a commentary filtering state
-                if self._should_filter_commentary or self._partial_commentary:
-                    # Try to build partial commentary
-                    potential_commentary = (
-                        self._partial_commentary + event.content.strip().lower()
-                    )
+                if filter_commentary or partial_commentary:
+                    # Accumulate commentary fragments intelligently
+                    content_strip = event.content.strip().lower()
+                    potential_commentary = partial_commentary + content_strip
 
                     if potential_commentary == "commentary":
                         # Complete commentary found - filter it
                         should_filter = True
-                        self._partial_commentary = ""  # Reset
-                        self._should_filter_commentary = False  # Done filtering
+                        partial_commentary = ""
+                        filter_commentary = False
                     elif "commentary".startswith(potential_commentary):
                         # Partial match - accumulate and filter this chunk
                         should_filter = True
-                        self._partial_commentary = potential_commentary
+                        partial_commentary = potential_commentary
                     else:
-                        # Not commentary - reset and keep the event
-                        self._partial_commentary = ""
-                        self._should_filter_commentary = False
+                        partial_commentary = ""
+                        filter_commentary = False
                 else:
-                    # Not in commentary filtering state - reset partial state
-                    self._partial_commentary = ""
+                    partial_commentary = ""
 
             if should_filter:
                 # Skip this commentary filler
@@ -574,15 +581,15 @@ class HarmonyParser:
 
             # Update filtering state based on events and buffer state
             if event.event_type == "tool_call":
-                self._should_filter_commentary = (
-                    True  # Filter commentary after tool calls
-                )
-                self._partial_commentary = ""  # Reset on tool call
+                filter_commentary = True
+                partial_commentary = ""
             elif buffer_has_call_token:
-                self._should_filter_commentary = (
-                    True  # Filter commentary after <|call|> token
-                )
+                filter_commentary = True
 
             filtered_events.append(event)
+
+        # Write back local changes to instance attrs
+        self._should_filter_commentary = filter_commentary
+        self._partial_commentary = partial_commentary
 
         return filtered_events
