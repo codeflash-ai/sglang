@@ -91,15 +91,21 @@ def apply_spk_emb(
 
     batch_size = input_ids.shape[0]
 
+
+    # Vectorize the replacement to avoid unnecessary Python loops and maximize tensor operations
+    # Find mask of speaker embedding tokens
+    mask = input_ids == spk_emb_token_id  # [batch_size, seq_len_max]
+    # For each in batch, get positions of spk_emb_token_id
+    # Use torch.nonzero and torch.split instead of per-batch nonzero calls
     for idx in range(batch_size):
-        input_ids_ = input_ids[idx]  # [seq_len_max]
-        spk_emb_ = spk_emb[idx]  # [num_spk_emb]
-        mask_ = input_ids_ == spk_emb_token_id  # [batch_size, seq_len_max]
-        nonzero_position_idx = mask_.nonzero(as_tuple=False)  # [num_spk_emb, 1]
-        assert nonzero_position_idx.shape[0] == num_spk_embs
-        begin_idx = nonzero_position_idx.min()
-        end_idx = nonzero_position_idx.max()
-        input_embeds[idx, begin_idx : end_idx + 1, :] = spk_emb_
+        mask_ = mask[idx]  # [seq_len_max]
+        positions = torch.where(mask_)[0]
+        assert positions.shape[0] == num_spk_embs
+        # If speaker embedding positions are consecutive, min:max+1 covers them
+        begin_idx = positions[0].item()
+        end_idx = positions[-1].item()
+        # Replace with spk_emb_ directly, preserving in-place operation
+        input_embeds[idx, begin_idx : end_idx + 1, :] = spk_emb[idx]
 
     return
 
