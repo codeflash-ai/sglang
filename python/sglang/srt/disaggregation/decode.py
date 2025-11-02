@@ -103,11 +103,12 @@ class DecodeReqToTokenPool:
         self.device = device
         self.pre_alloc_size = pre_alloc_size
         with memory_saver_adapter.region(tag=GPU_MEMORY_TYPE_KV_CACHE):
-            self.req_to_token = torch.zeros(
+            self.req_to_token = torch.empty(
                 (size + pre_alloc_size, max_context_len),
                 dtype=torch.int32,
                 device=device,
             )
+            self.req_to_token.zero_()
 
         self.free_slots = list(range(size + pre_alloc_size))
 
@@ -118,11 +119,13 @@ class DecodeReqToTokenPool:
         return len(self.free_slots)
 
     def alloc(self, need_size: int) -> List[int]:
+        if need_size == 0:
+            return []
         if need_size > len(self.free_slots):
             return None
 
         select_index = self.free_slots[:need_size]
-        self.free_slots = self.free_slots[need_size:]
+        del self.free_slots[:need_size]
         return select_index
 
     def free(self, free_index: Union[int, List[int]]):
