@@ -92,7 +92,10 @@ class OffloaderV1(BaseOffloader):
         submodule_accessor: Optional[_SubmoduleAccessor] = None,
         whitelist_param_names_creator: Optional[_WhitelistParamNamesCreator] = None,
     ):
-        return [self.maybe_offload_to_cpu(module) for module in all_modules_generator]
+        # Prematerialize the generator to list in C-level loop for faster iteration
+        materialized = list(all_modules_generator)
+        maybe_offload = self.maybe_offload_to_cpu
+        return [maybe_offload(module) for module in materialized]
 
     def maybe_offload_to_cpu(self, module: torch.nn.Module) -> torch.nn.Module:
         if (params := next(module.parameters(), None)) is None:
