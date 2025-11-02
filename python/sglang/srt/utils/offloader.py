@@ -328,12 +328,17 @@ class _ModuleOffloader(ABC):
 class _BaseParamOffloader(ABC):
     @staticmethod
     def create(mode: str, **kwargs) -> "_BaseParamOffloader":
-        return {
-            "meta": _MetaParamOffloader,
-            "cpu": _CpuParamOffloader,
-            "shm_cpu": _ShmCpuParamOffloader,
-            "sharded_gpu": _ShardedGpuParamOffloader,
-        }[mode](**kwargs)
+        if mode == "meta":
+            return _MetaParamOffloader(**kwargs)
+        elif mode == "cpu":
+            return _CpuParamOffloader(**kwargs)
+        elif mode == "shm_cpu":
+            return _ShmCpuParamOffloader(**kwargs)
+        elif mode == "sharded_gpu":
+            return _ShardedGpuParamOffloader(**kwargs)
+        else:
+            raise KeyError(mode)
+
 
     def __init__(self, module, param_name):
         self._module = module
