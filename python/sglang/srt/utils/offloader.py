@@ -423,6 +423,8 @@ def _move_param_to_cpu(param, pin_memory: bool):
 
 
 def _create_cpu_data(data, pin_memory: bool):
+    if data.device.type == "cpu" and data.is_pinned() == pin_memory:
+        return data
     cpu_data = _empty_strided_like(
         data,
         device="cpu",
@@ -459,6 +461,13 @@ def _move_param_to_meta(module, param_name):
 
 
 def _empty_strided_like(x: torch.Tensor, device, pin_memory=False):
+    # Optimization: Use empty_like with memory_format for contiguous case
+    if x.is_contiguous(memory_format=torch.contiguous_format):
+        return torch.empty_like(
+            x,
+            device=device,
+            pin_memory=pin_memory,
+        )
     return torch.empty_strided(
         size=x.size(),
         stride=x.stride(),
