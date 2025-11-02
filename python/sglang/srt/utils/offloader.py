@@ -52,7 +52,6 @@ _instance: Optional[BaseOffloader] = NoopOffloader()
 
 
 def get_offloader():
-    assert _instance is not None
     return _instance
 
 
