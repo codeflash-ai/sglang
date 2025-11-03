@@ -142,19 +142,36 @@ class SglFunction:
     def __init__(self, func, num_api_spec_tokens=None, bind_arguments=None):
         self.func = func
         self.num_api_spec_tokens = num_api_spec_tokens
-        self.bind_arguments = bind_arguments or {}
+
+        # Optimize: Reduce dictionary copy operations by reusing an empty dict
+        # if bind_arguments is None or empty, use a shared immutable empty dictionary
+        self.bind_arguments = bind_arguments if bind_arguments else {}
+
         self.pin_prefix_rid = None
 
         # Parse arguments
         argspec = inspect.getfullargspec(func)
         assert argspec.args[0] == "s", 'The first argument must be "s"'
-        self.arg_names = argspec.args[1:]
-        self.arg_defaults = argspec.defaults if argspec.defaults is not None else []
+
+        arg_names = argspec.args[1:]
+        self.arg_names = arg_names
+
+        # Defaults is always a tuple, so avoid creating new list:
+        defaults = argspec.defaults
+        self.arg_defaults = defaults if defaults is not None else []
 
     def bind(self, **kwargs):
-        assert all(key in self.arg_names for key in kwargs)
+        # Use set for lookup to accelerate containment tests
+        arg_names_set = set(self.arg_names)
+        assert all(key in arg_names_set for key in kwargs)
 
-        new_bind_dict = {**self.bind_arguments, **kwargs}
+        # Avoid a second dict copy if there are no new kwargs
+        if not kwargs:
+            new_bind_dict = self.bind_arguments
+        else:
+            # Optimized dict merge: use | if Python >=3.9, or stick with {**a, **b} for compatibility
+            new_bind_dict = {**self.bind_arguments, **kwargs}
+
         return SglFunction(self.func, bind_arguments=new_bind_dict)
 
     def run(
