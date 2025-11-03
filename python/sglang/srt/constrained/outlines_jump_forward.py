@@ -157,13 +157,17 @@ class OutlinesJumpForwardMap:
         return jump_forward_str, next_state
 
     def jump_forward_byte(self, state):
-        if state not in self.state_to_jump_forward:
+        # Fast check with direct lookup and avoid extra while condition lookups
+        m = self.state_to_jump_forward
+        if state not in m:
             return None
 
         jump_forward_bytes = []
         next_state = None
-        while state in self.state_to_jump_forward:
-            e = self.state_to_jump_forward[state]
+        while True:
+            e = m.get(state)
+            if e is None:
+                break
             assert e.byte is not None and e.byte_next_state is not None
             jump_forward_bytes.append((e.byte, e.byte_next_state))
             next_state = e.byte_next_state

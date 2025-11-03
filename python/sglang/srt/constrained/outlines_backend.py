@@ -89,13 +89,16 @@ class OutlinesGrammar(BaseGrammarObject):
         suffix_bytes = []
         continuation_range = range(0x80, 0xC0)
         cur_state = self.state
-        while (
-            len(jump_forward_bytes) and jump_forward_bytes[0][0] in continuation_range
-        ):
-            # continuation bytes
-            byte_edge = jump_forward_bytes.pop(0)
+
+        # Avoid pop(0) O(n) cost by using an index
+        i = 0
+        n = len(jump_forward_bytes)
+        while i < n and jump_forward_bytes[i][0] in continuation_range:
+            byte_edge = jump_forward_bytes[i]
             suffix_bytes.append(byte_edge[0])
             cur_state = byte_edge[1]
+
+            i += 1
 
         suffix_tokens = [f"<0x{hex(b)[2:].upper()}>" for b in suffix_bytes]
         suffix_ids = tokenizer.convert_tokens_to_ids(suffix_tokens)
