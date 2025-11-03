@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_gemlite_cache_path() -> str:
-    return f"/tmp/{pwd.getpwuid(os.getuid()).pw_gecos}_gemlite.json"
+    return f"/tmp/{_get_gecos_for_uid()}_gemlite.json"
 
 
 def save_gemlite_cache(print_error: bool = False) -> bool:
@@ -122,3 +122,10 @@ def apply_torchao_config_to_model(
         raise ValueError(f"Unexpected config: {torchao_config}")
 
     return model
+
+def _get_gecos_for_uid() -> str:
+    uid = os.getuid()
+    if not hasattr(_get_gecos_for_uid, "_cached_uid") or _get_gecos_for_uid._cached_uid != uid:
+        _get_gecos_for_uid._cached_uid = uid
+        _get_gecos_for_uid._cached_gecos = pwd.getpwuid(uid).pw_gecos
+    return _get_gecos_for_uid._cached_gecos
