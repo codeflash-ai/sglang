@@ -226,7 +226,9 @@ def gen_string(
 
 
 def image(expr: SglExpr):
-    return SglImage(expr)
+    # Local variable to avoid attribute lookup on returned value
+    sgl_image_cls = SglImage
+    return sgl_image_cls(expr)
 
 
 def video(path: str, num_frames: int):
