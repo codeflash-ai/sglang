@@ -99,17 +99,27 @@ def _mark_dynamic_on_value(val, dims):
 def _infer_dynamic_arg_dims_from_annotations(forward_fn):
     sig = inspect.signature(forward_fn)
     dyn = {}
+    tensor_type = torch.Tensor
     for name, p in sig.parameters.items():
         ann = p.annotation
         # Accept torch.Tensor / Optional[torch.Tensor] / your IntermediateTensors types by name
-        if (
-            ann is torch.Tensor
-            or getattr(getattr(ann, "__args__", [None])[0], "__name__", "") == "Tensor"
+        if ann is tensor_type:
+            dyn[name] = 0
+            continue
+        ann_args = getattr(ann, "__args__", None)
+        if ann_args and (
+            ann_args[0] is tensor_type
+            or getattr(ann_args[0], "__name__", "") == "Tensor"
         ):
             dyn[name] = 0
-        elif getattr(ann, "__name__", "") in ("IntermediateTensors",) or any(
+            continue
+        ann_name = getattr(ann, "__name__", "")
+        if ann_name == "IntermediateTensors":
+            dyn[name] = 0
+            continue
+        if ann_args and any(
             getattr(a, "__name__", "") == "IntermediateTensors"
-            for a in getattr(ann, "__args__", [])
+            for a in ann_args
         ):
             dyn[name] = 0
     if not dyn:
