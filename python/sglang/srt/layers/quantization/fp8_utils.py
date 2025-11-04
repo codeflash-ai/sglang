@@ -367,20 +367,16 @@ def block_quant_to_tensor_quant(
 
     x_dq_block = x_q_block.to(torch.float32)
 
-    x_dq_block_tiles = [
-        [
-            x_dq_block[
-                j * block_n : min((j + 1) * block_n, n),
-                i * block_k : min((i + 1) * block_k, k),
-            ]
-            for i in range(k_tiles)
-        ]
-        for j in range(n_tiles)
-    ]
+    # Avoid constructing deep nested lists when possible, operate in-place.
+    # Construct the index ranges outside the loop for numeric stability.
+    n_ranges = [ (j * block_n, min((j + 1) * block_n, n)) for j in range(n_tiles)]
+    k_ranges = [ (i * block_k, min((i + 1) * block_k, k)) for i in range(k_tiles)]
 
-    for i in range(k_tiles):
-        for j in range(n_tiles):
-            x_dq_block_tiles[j][i][:, :] = x_dq_block_tiles[j][i] * x_s[j][i]
+    # Iterate and apply scale in-place without building lists
+    for j, (n_start, n_end) in enumerate(n_ranges):
+        for i, (k_start, k_end) in enumerate(k_ranges):
+            x_dq_block[n_start:n_end, k_start:k_end].mul_(x_s[j][i])
+
 
     x_q_tensor, scale = (
         scaled_fp8_quant(x_dq_block)
