@@ -6,6 +6,9 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
+# This variable caches the partial name per rank, since partial name is always unique per rank+time.
+_partial_name_cache: Optional[str] = None
+
 
 class _Dumper:
     """Utility to dump tensors, which can be useful when comparison checking models.
@@ -43,11 +46,12 @@ class _Dumper:
 
         # Users may want to `dump` only on some ranks, thus determine name here
         if self._partial_name is None:
-            self._partial_name = _get_partial_name()
+            self._partial_name = _get_partial_name_cached()
 
         self._forward_pass_id += 1
+        timestamp = time.time()
         print(
-            f"[Dumper] [{time.time()}] on_forward_pass_start id={self._forward_pass_id}"
+            f"[Dumper] [{timestamp}] on_forward_pass_start id={self._forward_pass_id}"
         )
 
     def dump(self, name, value, **kwargs):
@@ -118,6 +122,14 @@ def get_truncated_value(value):
         slice(0, 5) if dim_size > 200 else slice(None) for dim_size in value.shape
     ]
     return value[tuple(slices)]
+
+def _get_partial_name_cached():
+    global _partial_name_cache
+    if _partial_name_cache is not None:
+        return _partial_name_cache
+    value = _get_partial_name()
+    _partial_name_cache = value
+    return value
 
 
 dumper = _Dumper()
