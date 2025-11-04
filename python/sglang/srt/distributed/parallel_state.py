@@ -111,10 +111,9 @@ def _get_unique_name(name: str) -> str:
     _get_unique_name("tp") -> "tp:0"
     _get_unique_name("tp") -> "tp:1"
     """
-    if name not in _group_name_counter:
-        _group_name_counter[name] = 0
-    newname = f"{name}:{_group_name_counter[name]}"
-    _group_name_counter[name] += 1
+    count = _group_name_counter.setdefault(name, 0)
+    newname = f"{name}:{count}"
+    _group_name_counter[name] = count + 1
     return newname
 
 
@@ -1247,8 +1246,10 @@ _WORLD: Optional[GroupCoordinator] = None
 
 
 def get_world_group() -> GroupCoordinator:
-    assert _WORLD is not None, "world group is not initialized"
-    return _WORLD
+    # Use local variable to avoid repeated global lookups; assert only once.
+    world = _WORLD
+    assert world is not None, "world group is not initialized"
+    return world
 
 
 def init_world_group(
@@ -1681,7 +1682,9 @@ def get_world_size():
 
 def get_world_rank():
     """Return my rank for the world group."""
-    return get_world_group().rank_in_group
+    # Local var shortens chaining and repeated lookups.
+    group = get_world_group()
+    return group.rank_in_group
 
 
 def get_tensor_model_parallel_world_size():
