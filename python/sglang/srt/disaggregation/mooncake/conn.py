@@ -1125,30 +1125,40 @@ class MooncakeKVSender(CommonKVSender):
             )
 
     def poll(self) -> KVPoll:
-        if self.conclude_state is None:
-            status = self.kv_mgr.check_status(self.bootstrap_room)
-            if status in (KVPoll.Success, KVPoll.Failed):
+        # Avoid repeated attribute lookups
+        kv_mgr = self.kv_mgr
+        bootstrap_room = self.bootstrap_room
+
+        conclude_state = self.conclude_state  # Localize for quick check
+        if conclude_state is None:
+            status = kv_mgr.check_status(bootstrap_room)
+            # Fast check using tuple constant inline
+            if status is KVPoll.Success or status is KVPoll.Failed:
                 self.conclude_state = status
-            elif status == KVPoll.Bootstrapping:
-                if self.init_time is not None:
+            elif status is KVPoll.Bootstrapping:
+                # Minimize repeated time.time() and instance attribute reads
+                init_time = self.init_time
+                if init_time is not None:
                     now = time.time()
-                    elapsed = now - self.init_time
-                    if elapsed >= self.kv_mgr.bootstrap_timeout:
+                    elapsed = now - init_time
+                    # Minimize dot-access cost for constant, move variable access out of comparison
+                    timeout = kv_mgr.bootstrap_timeout
+                    if elapsed >= timeout:
                         logger.warning_once(
                             "Some requests timed out when bootstrapping, "
                             "which means prefill instances fail to receive the KV indices from the decode instance of this request. "
                             "If a greater mean TTFT is acceptable, you can 'export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600' (10 minutes) to relax the timeout condition. "
                         )
-                        self.kv_mgr.record_failure(
-                            self.bootstrap_room,
-                            f"Request {self.bootstrap_room} timed out after {elapsed:.1f}s in KVPoll.Bootstrapping",
+                        kv_mgr.record_failure(
+                            bootstrap_room,
+                            f"Request {bootstrap_room} timed out after {elapsed:.1f}s in KVPoll.Bootstrapping",
                         )
                         self.conclude_state = KVPoll.Failed
                         return KVPoll.Failed
 
             return status
         else:
-            return self.conclude_state
+            return conclude_state
 
     def clear(self) -> None:
         if self.bootstrap_room in self.kv_mgr.request_status:
