@@ -126,7 +126,7 @@ def chunk_gated_delta_rule(
     head_first: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
 ):
-    r"""
+    """
     Args:
         q (torch.Tensor):
             queries of shape `[B, T, H, K]` if `head_first=False` else `[B, H, T, K]`.
@@ -202,9 +202,6 @@ def chunk_gated_delta_rule(
             "head_first is deprecated and will be removed in a future version. "
             "Please use head_first=False for now instead."
         )
-        q, k, v, beta, g = map(
-            lambda x: rearrange(x, "b h t ... -> b t h ..."), (q, k, v, beta, g)
-        )
     # if not head_first and q.shape[1] < q.shape[2]:
     #     warnings.warn(
     #         f"Input tensor shape suggests potential format mismatch: seq_len ({q.shape[1]}) < num_heads ({q.shape[2]}). "
@@ -213,30 +210,30 @@ def chunk_gated_delta_rule(
     #         "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
     #     )
     if cu_seqlens is not None:
-        if q.shape[0] != 1:
+        # Use local variables for shape lookup to minimize attribute access
+        bsz = q.shape[0]
+        if bsz != 1:
             raise ValueError(
-                f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
+                f"The batch size is expected to be 1 rather than {bsz} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
             )
-        if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
+        nseq = len(cu_seqlens) - 1
+        if initial_state is not None and initial_state.shape[0] != nseq:
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {nseq} rather than {initial_state.shape[0]}."
             )
     if scale is None:
         scale = k.shape[-1] ** -0.5
-    o, final_state = ChunkGatedDeltaRuleFunction.apply(
-        q,
-        k,
-        v,
-        g,
-        beta,
-        scale,
-        initial_state,
-        output_final_state,
-        cu_seqlens,
-        use_qk_l2norm_in_kernel,
+
+    # Collect args directly: saves repeated attribute lookup, packs all for apply call
+    args = (
+        q, k, v, g, beta, scale, initial_state, output_final_state, cu_seqlens, use_qk_l2norm_in_kernel
     )
+    o, final_state = ChunkGatedDeltaRuleFunction.apply(*args)
+
+    # Only rearrange if head_first True, but this branch is always unreachable due to raise above
+    # Kept for exact behavioral parity; not removed
     if head_first:
         o = rearrange(o, "b t h ... -> b h t ...")
     return o, final_state
