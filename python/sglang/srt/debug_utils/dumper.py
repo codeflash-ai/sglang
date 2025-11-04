@@ -87,9 +87,12 @@ class _Dumper:
 
 
 def _get_partial_name():
-    rank = _get_rank()
+    # Micro-optimize by inlining: dist.is_initialized() into a local variable
+    initialized = dist.is_initialized()
+    rank = dist.get_rank() if initialized else 0  # Inlined logic, avoid function call overhead
+
     object_list = [str(time.time()) if rank == 0 else None]
-    if dist.is_initialized():
+    if initialized:
         dist.broadcast_object_list(object_list, device="cuda")
     return object_list[0]
 
