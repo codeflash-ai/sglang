@@ -61,28 +61,48 @@ class _Dumper:
         self._dump_index += 1
 
         rank = _get_rank()
-        full_kwargs = dict(
-            forward_pass_id=self._forward_pass_id,
-            rank=rank,
-            name=name,
-            dump_index=self._dump_index,
-            **kwargs,
+        # Inline full_kwargs construction for lower overhead (avoids new dict/merge)
+        full_kwargs_items = (
+            ("forward_pass_id", self._forward_pass_id),
+            ("rank", rank),
+            ("name", name),
+            ("dump_index", self._dump_index),
         )
-        full_filename = "___".join(f"{k}={v}" for k, v in full_kwargs.items()) + ".pt"
-        path = self._base_dir / f"sglang_dump_{self._partial_name}" / full_filename
+        if kwargs:
+            # Merge here only if user provides extra kwargs
+            full_kwargs_items += tuple(kwargs.items())
+        # Use generator expression for joining, string allocation is single pass
+        full_filename = "___".join(f"{k}={v}" for k, v in full_kwargs_items) + ".pt"
+        base_dir = self._base_dir
+        partial_name = self._partial_name
+        path = base_dir / f"sglang_dump_{partial_name}" / full_filename
+
 
         sample_value = get_truncated_value(value)
 
+
+        val_type = type(value)
+        # Only check attributes if value is a Tensor
+        if isinstance(value, torch.Tensor):
+            val_shape = value.shape
+            val_dtype = value.dtype
+        else:
+            val_shape = None
+            val_dtype = None
+
         print(
             f"[Dumper] [{rank}, {time.time()}] {path} "
-            f"type={type(value)} "
-            f"shape={value.shape if isinstance(value, torch.Tensor) else None} "
-            f"dtype={value.dtype if isinstance(value, torch.Tensor) else None} "
+            f"type={val_type} "
+            f"shape={val_shape} "
+            f"dtype={val_dtype} "
             f"sample_value={sample_value}"
         )
 
         if self._enable_write_file:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            # Avoid redundant check/creation of parent directories by locking per call
+            parent = path.parent
+            if not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
             torch.save(value, str(path))
 
 
@@ -97,8 +117,7 @@ def _get_partial_name():
 def _get_rank():
     if dist.is_initialized():
         return dist.get_rank()
-    else:
-        return 0
+    return 0
 
 
 def get_truncated_value(value):
@@ -111,12 +130,19 @@ def get_truncated_value(value):
     if not isinstance(value, torch.Tensor):
         return None
 
-    if value.numel() < 200:
+    numel = value.numel()
+    if numel < 200:
         return value
 
-    slices = [
-        slice(0, 5) if dim_size > 200 else slice(None) for dim_size in value.shape
-    ]
+    # Optimize slice creation: avoid constructing tuple for small dimensions
+    shape = value.shape
+    slices = []
+    slice_obj = slice(0, 5)
+    for dim_size in shape:
+        if dim_size > 200:
+            slices.append(slice_obj)
+        else:
+            slices.append(slice(None))
     return value[tuple(slices)]
 
 
