@@ -464,10 +464,16 @@ def _requant_weight_ue8m0(
 def per_block_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2
     m, n = x.shape
-    x_padded = torch.zeros(
-        (align(m, 128), align(n, 128)), dtype=x.dtype, device=x.device
-    )
-    x_padded[:m, :n] = x
+    
+    # Only pad if necessary to avoid unnecessary allocations/copies
+    if m % 128 != 0 or n % 128 != 0:
+        x_padded = torch.zeros(
+            (align(m, 128), align(n, 128)), dtype=x.dtype, device=x.device
+        )
+        x_padded[:m, :n] = x
+    else:
+        x_padded = x
+    
     x_view = x_padded.view(-1, 128, x_padded.size(1) // 128, 128)
     x_amax = x_view.abs().float().amax(dim=(1, 3), keepdim=True).clamp(1e-4)
     sf = ceil_to_ue8m0(x_amax / 448.0)
