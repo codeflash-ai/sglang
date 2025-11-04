@@ -24,7 +24,7 @@ class SessionReqNode:
         self.parent = parent
         if parent is not None:
             parent.childs.append(self)
-        self.childs = [] if not childs else childs
+        self.childs = childs if childs else []
 
     def clear_childs(self, req_dict):
         for req_node in self.childs:
@@ -47,16 +47,18 @@ class SessionReqNode:
         return self._str_helper(self.req.rid)
 
     def _str_helper(self, prefix=""):
-        if len(self.childs) == 0:
+        if not self.childs:
             return prefix + "\n"
-        else:
-            origin_prefix = prefix
-            prefix += " -- " + self.childs[0].req.rid
-            ret = self.childs[0]._str_helper(prefix)
+        origin_prefix = prefix
+        # Avoid repeated attribute access and string concatenation inside loop
+        first_child = self.childs[0]
+        prefix_first = prefix + " -- " + first_child.req.rid
+        ret = first_child._str_helper(prefix_first)
+        if len(self.childs) > 1:
+            base_prefix = " " * len(origin_prefix) + " \\- "
             for child in self.childs[1:]:
-                prefix = " " * len(origin_prefix) + " \\- " + child.req.rid
-                ret += child._str_helper(prefix)
-            return ret
+                ret += child._str_helper(base_prefix + child.req.rid)
+        return ret
 
 
 class Session:
