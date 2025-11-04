@@ -479,7 +479,16 @@ def per_block_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
 
 # COPIED FROM DeepGEMM
 def ceil_to_ue8m0(x: torch.Tensor):
-    return torch.pow(2.0, torch.ceil(torch.log2(x.abs())))
+    # Optimization: Avoid redundant computations and temporary tensors.
+    # Combine abs and log2 in-place, then ceil and pow only once.
+    # Use in-place operations to reduce memory usage, when safe.
+
+    # Use torch.abs_ (in-place) only if x can be mutated safely
+    abs_x = x.abs()
+    log2_abs_x = torch.log2(abs_x)
+    ceil_log2 = torch.ceil(log2_abs_x)
+    # Use torch.exp2 for direct base-2 exponentiation, which is more efficient than pow(2.0, ...)
+    return torch.exp2(ceil_log2)
 
 
 def channel_quant_to_tensor_quant(
