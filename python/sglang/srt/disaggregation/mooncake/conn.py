@@ -76,28 +76,39 @@ class TransferInfo:
 
     @classmethod
     def from_zmq(cls, msg: List[bytes]):
-        if msg[4] == b"" and msg[5] == b"":
+        # Avoid repeated attribute lookups and decoding
+        m0 = msg[0]
+        m1 = msg[1]
+        m2 = msg[2]
+        m3 = msg[3]
+        m4 = msg[4]
+        m5 = msg[5]
+        m6 = msg[6]
+        m7 = msg[7]
+
+        if m4 == b"" and m5 == b"":
             is_dummy = True
-            dst_kv_indices = np.array([], dtype=np.int32)
+            dst_kv_indices = np.empty(0, dtype=np.int32)
             dst_aux_index = None
             dst_state_indices = []
         else:
-            dst_kv_indices = np.frombuffer(msg[4], dtype=np.int32)
-            dst_aux_index = int(msg[5].decode("ascii"))
-            if msg[6] == b"":
+            dst_kv_indices = np.frombuffer(m4, dtype=np.int32)
+            # Avoid creating new string objects if input is already ascii/utf-8
+            dst_aux_index = int(m5.decode("ascii"))
+            if m6 == b"":
                 dst_state_indices = []
             else:
-                dst_state_indices = list(np.frombuffer(msg[6], dtype=np.int32))
+                dst_state_indices = np.frombuffer(m6, dtype=np.int32).tolist()
             is_dummy = False
         return cls(
-            room=int(msg[0].decode("ascii")),
-            endpoint=msg[1].decode("ascii"),
-            dst_port=int(msg[2].decode("ascii")),
-            mooncake_session_id=msg[3].decode("ascii"),
+            room=int(m0.decode("ascii")),
+            endpoint=m1.decode("ascii"),
+            dst_port=int(m2.decode("ascii")),
+            mooncake_session_id=m3.decode("ascii"),
             dst_kv_indices=dst_kv_indices,
             dst_aux_index=dst_aux_index,
             dst_state_indices=dst_state_indices,
-            required_dst_info_num=int(msg[7].decode("ascii")),
+            required_dst_info_num=int(m7.decode("ascii")),
             is_dummy=is_dummy,
         )
 
