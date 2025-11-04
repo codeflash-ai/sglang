@@ -51,6 +51,10 @@ if _use_aiter:
 if _is_cuda:
     from sgl_kernel import fp8_blockwise_scaled_mm, fp8_scaled_mm
 
+_TORCH_VERSION = torch.__version__.split("+")[0]
+
+_TORCH_VERSION_TUPLE = (0, 0, 0)
+
 use_vllm_cutlass_w8a8_fp8_kernel = get_bool_env_var("USE_VLLM_CUTLASS_W8A8_FP8_KERNEL")
 use_triton_w8a8_fp8_kernel = get_bool_env_var("USE_TRITON_W8A8_FP8_KERNEL")
 
@@ -60,11 +64,6 @@ TORCH_DEVICE_IDENTITY = None
 
 
 def use_rowwise_torch_scaled_mm():
-    _TORCH_VERSION = torch.__version__.split("+")[0]
-    try:
-        _TORCH_VERSION_TUPLE = tuple(map(int, _TORCH_VERSION.split(".")[:3]))
-    except ValueError:
-        _TORCH_VERSION_TUPLE = (0, 0, 0)
     if _is_hip:
         # The condition to determine if it is on a platform that supports
         # torch._scaled_mm rowwise feature.
