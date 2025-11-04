@@ -4,12 +4,14 @@ from functools import lru_cache
 
 import torch
 
+_layer_id_pattern = re.compile(r"layers\.(\d+)\.")
+
 logger = logging.getLogger(__name__)
 
 
 def get_layer_id(weight_name):
     # example weight name: model.layers.10.self_attn.qkv_proj.weight
-    match = re.search(r"layers\.(\d+)\.", weight_name)
+    match = _layer_id_pattern.search(weight_name)
     if match:
         return int(match.group(1))
     return None
