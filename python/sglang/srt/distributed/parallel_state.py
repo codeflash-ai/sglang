@@ -111,10 +111,9 @@ def _get_unique_name(name: str) -> str:
     _get_unique_name("tp") -> "tp:0"
     _get_unique_name("tp") -> "tp:1"
     """
-    if name not in _group_name_counter:
-        _group_name_counter[name] = 0
-    newname = f"{name}:{_group_name_counter[name]}"
-    _group_name_counter[name] += 1
+    count = _group_name_counter.setdefault(name, 0)
+    newname = f"{name}:{count}"
+    _group_name_counter[name] = count + 1
     return newname
 
 
@@ -135,7 +134,7 @@ if _supports_custom_op:
         group._all_reduce_in_place(tensor)
 
     def inplace_all_reduce_fake(tensor: torch.Tensor, group_name: str) -> None:
-        return
+        pass
 
     direct_register_custom_op(
         op_name="inplace_all_reduce",
