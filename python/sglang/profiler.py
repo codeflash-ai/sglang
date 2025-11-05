@@ -81,7 +81,7 @@ def run_profile(
     merge_profiles: bool = False,
 ):
     # step based profile will self terminate on num_steps constraints
-    link = _run_profile(
+    return _run_profile(
         url,
         num_steps,
         activities,
@@ -90,7 +90,6 @@ def run_profile(
         profile_by_stage,
         merge_profiles,
     )
-    return link
 
 
 if __name__ == "__main__":
