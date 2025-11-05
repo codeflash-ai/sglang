@@ -77,7 +77,7 @@ class BenchArgs:
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace):
-        attrs = [attr.name for attr in dataclasses.fields(cls)]
+        attrs = cls.__dataclass_fields__.keys()
         return cls(**{attr: getattr(args, attr) for attr in attrs})
 
 
