@@ -59,24 +59,28 @@ def select_best_resolution(original_size, possible_resolutions):
         tuple: The best fit resolution in the format (width, height).
     """
     original_width, original_height = original_size
+    o_area = original_width * original_height
+
+    # Precompute values before loop for performance
     best_fit = None
-    max_effective_resolution = 0
+    max_effective_resolution = -1  # negative for comparison: effective resolution always >= 0
     min_wasted_resolution = float("inf")
 
     for width, height in possible_resolutions:
-        # Calculate the downscaled size to keep the aspect ratio
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
+        # Calculate scale only once
+        width_scale = width / original_width
+        height_scale = height / original_height
+        scale = width_scale if width_scale < height_scale else height_scale
 
-        # Calculate effective and wasted resolutions
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        ds_width = int(original_width * scale)
+        ds_height = int(original_height * scale)
+        eff_res = ds_width * ds_height
+
+        effective_resolution = eff_res if eff_res < o_area else o_area
         wasted_resolution = (width * height) - effective_resolution
 
-        if effective_resolution > max_effective_resolution or (
+        # Use tuple comparison for branchless update
+        if (effective_resolution > max_effective_resolution) or (
             effective_resolution == max_effective_resolution
             and wasted_resolution < min_wasted_resolution
         ):
