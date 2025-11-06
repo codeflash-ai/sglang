@@ -68,9 +68,16 @@ def _device_from_maybe_uuid(device_maybe_uuid: Union[int, str]) -> int:
         return device_maybe_uuid
 
     if isinstance(device_maybe_uuid, str):
-        for device in range(torch.cuda.device_count()):
-            if str(torch.cuda.get_device_properties(device).uuid) == device_maybe_uuid:
-                return device
+        # Cache device UUIDs for fast lookups
+        if not hasattr(_device_from_maybe_uuid, "_uuid_to_device"):
+            uuid_to_device = {}
+            for device in range(torch.cuda.device_count()):
+                uuid = str(torch.cuda.get_device_properties(device).uuid)
+                uuid_to_device[uuid] = device
+            _device_from_maybe_uuid._uuid_to_device = uuid_to_device
+        uuid_to_device = _device_from_maybe_uuid._uuid_to_device
+        if device_maybe_uuid in uuid_to_device:
+            return uuid_to_device[device_maybe_uuid]
         raise Exception("Invalid device_uuid=" + device_maybe_uuid)
 
     raise Exception(f"Unknown type: {device_maybe_uuid=}")
