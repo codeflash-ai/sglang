@@ -28,7 +28,6 @@ LLaVA-Onevision : https://arxiv.org/pdf/2408.03326
 
 """
 import ast
-import math
 import re
 from io import BytesIO
 
@@ -106,13 +105,19 @@ def resize_and_pad_image(image, target_resolution):
 
     if scale_w < scale_h:
         new_width = target_width
-        new_height = min(math.ceil(original_height * scale_w), target_height)
+        new_height = min((original_height * scale_w).__ceil__(), target_height)
     else:
         new_height = target_height
-        new_width = min(math.ceil(original_width * scale_h), target_width)
+        new_width = min((original_width * scale_h).__ceil__(), target_width)
 
-    # Resize the image
-    resized_image = image.resize((new_width, new_height))
+    # Use a faster resizing algorithm ('Image.BOX' is generally faster; fallback to 'Image.BILINEAR' when not available)
+    if hasattr(Image, "BOX"):
+        resample_method = Image.BOX
+    else:
+        resample_method = Image.BILINEAR
+
+    resized_image = image.resize((new_width, new_height), resample=resample_method)
+
 
     new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
     paste_x = (target_width - new_width) // 2
