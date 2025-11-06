@@ -36,15 +36,19 @@ import numpy as np
 import pybase64
 from PIL import Image
 
-from sglang.srt.utils import flatten_nested_list
-
 
 def has_valid_data(data) -> bool:
-    if data is None:
-        return False
-    if isinstance(data, list):
-        return any(has_valid_data(item) for item in flatten_nested_list(data))
-    return True
+    # Optimized to avoid repeated flattening and excessive recursion
+    stack = [data]
+    while stack:
+        current = stack.pop()
+        if current is None:
+            continue
+        if isinstance(current, list):
+            stack.extend(current)
+        else:
+            return True
+    return False
 
 
 def select_best_resolution(original_size, possible_resolutions):
