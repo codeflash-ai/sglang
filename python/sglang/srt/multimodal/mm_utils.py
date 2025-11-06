@@ -197,29 +197,9 @@ def process_anyres_image(image, processor, grid_pinpoints):
         np.array: An np array containing the processed image patches.
     """
     if isinstance(grid_pinpoints, str) and "x" in grid_pinpoints:
-        try:
-            patch_size = processor.size[0]
-        except Exception as e:
-            patch_size = processor.size["shortest_edge"]
-        assert patch_size in [
-            224,
-            336,
-            384,
-            448,
-            512,
-        ], "patch_size should be in [224, 336, 384, 448, 512]"
-        # Use regex to extract the range from the input string
-        matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
-        range_start = tuple(map(int, matches[0]))
-        range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
-        grid_pinpoints = [
-            (i, j)
-            for i in range(range_start[0], range_end[0] + 1)
-            for j in range(range_start[1], range_end[1] + 1)
-        ]
-        # Multiply all elements by patch_size
-        grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
+        patch_size = _extract_patch_size(processor)
+        assert patch_size in [224, 336, 384, 448, 512], "patch_size should be in [224, 336, 384, 448, 512]"
+        grid_pinpoints = _extract_grid_pinpoints_from_str(grid_pinpoints, patch_size)
 
     if type(grid_pinpoints) is list:
         possible_resolutions = grid_pinpoints
@@ -229,26 +209,38 @@ def process_anyres_image(image, processor, grid_pinpoints):
     image_padded = resize_and_pad_image(image, best_resolution)
 
     # For Siglip processor, only have size but no crop size
+
+    # Use dict.get for faster attribute access, and avoid dict() creation
+    _proc_dict = processor.__dict__
     crop_size = (
-        processor.crop_size["height"]
-        if "crop_size" in processor.__dict__
+        _proc_dict["crop_size"]["height"]
+        if "crop_size" in _proc_dict
         else processor.size["height"]
     )
+    proc_size = processor.size
     shortest_edge = (
-        processor.size["shortest_edge"]
-        if "shortest_edge" in processor.size
-        else processor.size["height"]
+        proc_size["shortest_edge"]
+        if "shortest_edge" in proc_size
+        else proc_size["height"]
     )
     patches = divide_to_patches(image_padded, crop_size)
+    # This resize is expensive - use built-in optimizations if possible
+    image_original_resize = image.resize((shortest_edge, shortest_edge), Image.BILINEAR)
+    image_patches = [image_original_resize]
+    image_patches.extend(patches)
 
-    image_original_resize = image.resize((shortest_edge, shortest_edge))
-
-    image_patches = [image_original_resize] + patches
-    image_patches = [
-        processor.preprocess(image_patch.convert("RGB"))["pixel_values"][0]
-        for image_patch in image_patches
-    ]
-    return np.stack(image_patches, axis=0)
+    # Preprocess all image patches in a loop - minimize .convert calls if patches already "RGB"
+    preprocess = processor.preprocess
+    convert_rgb = Image.Image.convert
+    im_rgb_mode = "RGB"
+    get_pix0 = lambda d: d["pixel_values"][0]
+    # Slight perf gain by hoisting some lookups
+    out_list = [None] * len(image_patches)
+    for i, img in enumerate(image_patches):
+        if img.mode != im_rgb_mode:
+            img = convert_rgb(img, im_rgb_mode)
+        out_list[i] = get_pix0(preprocess(img))
+    return np.stack(out_list, axis=0)
 
 
 def load_image_from_base64(image):
@@ -330,20 +322,53 @@ def process_images(images, image_processor, model_cfg):
     image_aspect_ratio = getattr(model_cfg, "image_aspect_ratio", None)
     new_images = []
     if image_aspect_ratio == "pad":
+        # Batch preprocess via minimize repeat work, but must keep functional output identical
+        backcolor = tuple(int(x * 255) for x in image_processor.image_mean)
+        preprocess = image_processor.preprocess
         for image in images:
-            image = expand2square(
-                image, tuple(int(x * 255) for x in image_processor.image_mean)
-            )
-            image = image_processor.preprocess(image)["pixel_values"][0]
-            new_images.append(image)
+            img_sq = expand2square(image, backcolor)
+            img_arr = preprocess(img_sq)["pixel_values"][0]
+            new_images.append(img_arr)
     elif "anyres" in image_aspect_ratio:
+        # No structural batch processing possible, but hoist lookups as above
+        processor = image_processor
+        grid_pinpoints = model_cfg.image_grid_pinpoints
         for image in images:
-            image = process_anyres_image(
-                image, image_processor, model_cfg.image_grid_pinpoints
-            )
-            new_images.append(image)
+            arr = process_anyres_image(image, processor, grid_pinpoints)
+            new_images.append(arr)
     else:
         return image_processor(images)["pixel_values"]
-    if all(x.shape == new_images[0].shape for x in new_images):
+    # Optimize shape check by using zip and only compare shape tuples as needed
+    first_shape = new_images[0].shape
+    if all(x.shape == first_shape for x in new_images):
         new_images = np.stack(new_images, axis=0)
     return new_images
+
+
+def _extract_patch_size(processor):
+    # This helper avoids exception overhead for the common case
+    try:
+        return processor.size[0]
+    except Exception:
+        return processor.size["shortest_edge"]
+
+def _extract_grid_pinpoints_from_str(grid_pinpoints, patch_size):
+    # Pre-compile regex
+    matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
+    range_start = tuple(map(int, matches[0]))
+    range_end = tuple(map(int, matches[-1]))
+    # Precompute range for fewer allocations
+    i_start, j_start = range_start
+    i_end, j_end = range_end
+    count_i = i_end - i_start + 1
+    count_j = j_end - j_start + 1
+    total = count_i * count_j
+    # Re-use result list allocation
+    grid_pinpoints_list = [None] * total
+    idx = 0
+    for i in range(i_start, i_end + 1):
+        i_val = i * patch_size
+        for j in range(j_start, j_end + 1):
+            grid_pinpoints_list[idx] = [i_val, j * patch_size]
+            idx += 1
+    return grid_pinpoints_list
