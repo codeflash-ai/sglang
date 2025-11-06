@@ -59,20 +59,31 @@ def check_environments():
 
 
 def get_abs_err(x, y):
-    return (x.detach() - y.detach()).flatten().abs().max().item()
+    xd = x.detach()
+    yd = y.detach()
+    diff = xd - yd
+    # Avoid extra flatten() by using torch operations that reduce over all elements
+    # This is more efficient than actually rearranging memory
+    return diff.abs().max().item()
 
 
 def get_err_ratio(x, y):
-    err = (x.detach() - y.detach()).flatten().square().mean().sqrt().item()
-    base = (x.detach()).flatten().square().mean().sqrt().item()
+    xd = x.detach()
+    yd = y.detach()
+    diff = xd - yd
+    # Compute err numerator in one sequence of ops, over all elements, without .flatten()
+    err = diff.square().mean().sqrt().item()
+    # Compute denominator from x, reusing xd
+    base = xd.square().mean().sqrt().item()
     return err / (base + 1e-8)
 
 
 def assert_close(prefix, ref, tri, ratio, warning=False, err_atol=1e-6):
     abs_atol = get_abs_err(ref, tri)
-    msg = f"{prefix} diff: {abs_atol:.6f} ratio: {get_err_ratio(ref, tri):.6f}"
+    err_ratio_val = get_err_ratio(ref, tri)
+    msg = f"{prefix} diff: {abs_atol:.6f} ratio: {err_ratio_val:.6f}"
     logger.info(msg)
-    error_rate = get_err_ratio(ref, tri)
+    error_rate = err_ratio_val
     if abs_atol <= err_atol:
         return
     if warning or (FLA_CI_ENV and (error_rate < 0.01 or abs_atol <= 0.3)):
