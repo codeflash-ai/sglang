@@ -29,7 +29,16 @@ def monkey_patch_torch_reductions():
     if _is_npu:
         return
 
+
+    # Hot-path: Avoid hasattr() on each call by memoizing at function scope
+    # Use a function attribute to record patch status (fast path, and avoids repeated hasattr costs)
+    patch_status_attr = '_sglang_patch_applied'
+    if getattr(monkey_patch_torch_reductions, patch_status_attr, False):
+        return
+
     if hasattr(reductions, "_reduce_tensor_original"):
+        # Defensive: Mark the function as patched so future calls hit the fast path
+        setattr(monkey_patch_torch_reductions, patch_status_attr, True)
         return
 
     reductions._reduce_tensor_original = reductions.reduce_tensor
@@ -39,6 +48,9 @@ def monkey_patch_torch_reductions():
     reductions.rebuild_cuda_tensor = _rebuild_cuda_tensor_modified
 
     reductions.init_reductions()
+
+    # Fast path for subsequent calls
+    setattr(monkey_patch_torch_reductions, patch_status_attr, True)
 
 
 # The signature has not been changed for years, and we will not need this when the next version is released,
