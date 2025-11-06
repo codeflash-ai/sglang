@@ -63,37 +63,36 @@ def time_func_latency(
 
         name = name or func.__name__
 
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            if not enable_metrics:
-                return await func(*args, **kwargs)
+        if asyncio.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if not enable_metrics:
+                    return await func(*args, **kwargs)
 
-            metric = FUNC_LATENCY
-            start = time.monotonic()
-            ret = func(*args, **kwargs)
-            if isinstance(ret, asyncio.Future) or asyncio.iscoroutine(ret):
+                metric = FUNC_LATENCY
+                start = time.monotonic()
+                ret = func(*args, **kwargs)
+                if isinstance(ret, asyncio.Future) or asyncio.iscoroutine(ret):
+                    try:
+                        ret = await ret
+                    finally:
+                        metric.labels(name=name).observe(time.monotonic() - start)
+                return ret
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                if not enable_metrics:
+                    return func(*args, **kwargs)
+
+                metric = FUNC_LATENCY
+                start = time.monotonic()
                 try:
-                    ret = await ret
+                    ret = func(*args, **kwargs)
                 finally:
                     metric.labels(name=name).observe(time.monotonic() - start)
-            return ret
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            if not enable_metrics:
-                return func(*args, **kwargs)
-
-            metric = FUNC_LATENCY
-            start = time.monotonic()
-            try:
-                ret = func(*args, **kwargs)
-            finally:
-                metric.labels(name=name).observe(time.monotonic() - start)
-            return ret
-
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
+                return ret
+            return sync_wrapper
 
     if func:
         return measure(func)
