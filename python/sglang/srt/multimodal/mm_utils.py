@@ -133,15 +133,18 @@ def divide_to_patches(image, patch_size):
     Returns:
         list: A list of PIL.Image.Image objects representing the patches.
     """
-    patches = []
     width, height = image.size
-    for i in range(0, height, patch_size):
-        for j in range(0, width, patch_size):
-            box = (j, i, j + patch_size, i + patch_size)
-            patch = image.crop(box)
-            patches.append(patch)
 
-    return patches
+    # Precompute the range to avoid repeated attribute access
+    ranges_i = range(0, height, patch_size)
+    ranges_j = range(0, width, patch_size)
+    
+    # Use list comprehension for faster patch collection
+    return [
+        image.crop((j, i, j + patch_size, i + patch_size))
+        for i in ranges_i
+        for j in ranges_j
+    ]
 
 
 def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
