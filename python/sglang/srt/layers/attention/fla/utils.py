@@ -274,12 +274,17 @@ is_gather_supported = hasattr(triton.language, "gather")
 
 def get_all_max_shared_mem():
     try:
-        return [
-            triton.runtime.driver.active.utils.get_device_properties(i)[
-                "max_shared_mem"
-            ]
-            for i in range(device_torch_lib.device_count())
-        ]
+        # Cache frequently used objects for faster access
+        driver_utils = triton.runtime.driver.active.utils
+        get_device_properties = driver_utils.get_device_properties
+        device_count = device_torch_lib.device_count()
+        if device_count == 0:
+            return [-1]
+        # Preallocate list for memory efficiency and loop, avoiding list comp
+        result = [0] * device_count
+        for i in range(device_count):
+            result[i] = get_device_properties(i)["max_shared_mem"]
+        return result
     except BaseException:
         _cpu_device_warning()
         return [-1]
