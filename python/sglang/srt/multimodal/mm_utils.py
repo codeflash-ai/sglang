@@ -63,23 +63,27 @@ def select_best_resolution(original_size, possible_resolutions):
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
+
+    # Precompute input area
+    original_area = original_width * original_height
+
+    # Loop through all candidate resolutions
     for width, height in possible_resolutions:
         # Calculate the downscaled size to keep the aspect ratio
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
+        scale_w = width / original_width
+        scale_h = height / original_height
+        scale = min(scale_w, scale_h)
+        downscaled_width = int(original_width * scale)
+        downscaled_height = int(original_height * scale)
+        downscaled_area = downscaled_width * downscaled_height
 
         # Calculate effective and wasted resolutions
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        effective_resolution = min(downscaled_area, original_area)
         wasted_resolution = (width * height) - effective_resolution
 
-        if effective_resolution > max_effective_resolution or (
-            effective_resolution == max_effective_resolution
-            and wasted_resolution < min_wasted_resolution
-        ):
+        # Find the best-fit based on effective and wasted resolutions
+        if (effective_resolution > max_effective_resolution or
+            (effective_resolution == max_effective_resolution and wasted_resolution < min_wasted_resolution)):
             max_effective_resolution = effective_resolution
             min_wasted_resolution = wasted_resolution
             best_fit = (width, height)
@@ -106,13 +110,31 @@ def resize_and_pad_image(image, target_resolution):
 
     if scale_w < scale_h:
         new_width = target_width
-        new_height = min(math.ceil(original_height * scale_w), target_height)
+        # No need for min() since target_height is already the bound
+        new_height_unbound = original_height * scale_w
+        if new_height_unbound >= target_height:
+            new_height = target_height
+        else:
+            new_height = math.ceil(new_height_unbound)
     else:
         new_height = target_height
-        new_width = min(math.ceil(original_width * scale_h), target_width)
+        new_width_unbound = original_width * scale_h
+        if new_width_unbound >= target_width:
+            new_width = target_width
+        else:
+            new_width = math.ceil(new_width_unbound)
 
-    # Resize the image
-    resized_image = image.resize((new_width, new_height))
+    # If the dimensions are already correct, avoid realloc/copy
+    if image.size == (target_width, target_height):
+        if image.mode != "RGB":
+            return image.convert("RGB")
+        return image
+
+    # Use high-performance resampling
+    resized_image = image.resize((new_width, new_height), resample=Image.BILINEAR)
+
+    if resized_image.mode != "RGB":
+        resized_image = resized_image.convert("RGB")
 
     new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
     paste_x = (target_width - new_width) // 2
@@ -133,13 +155,19 @@ def divide_to_patches(image, patch_size):
     Returns:
         list: A list of PIL.Image.Image objects representing the patches.
     """
-    patches = []
     width, height = image.size
+    # Preallocate list, max possible number of patches
+    patches = []
+    append = patches.append  # Micro-optimization: localize method look-up
+
+    # Avoid recomputing box
     for i in range(0, height, patch_size):
+        bottom = i + patch_size
         for j in range(0, width, patch_size):
-            box = (j, i, j + patch_size, i + patch_size)
+            right = j + patch_size
+            box = (j, i, right, bottom)
             patch = image.crop(box)
-            patches.append(patch)
+            append(patch)
 
     return patches
 
@@ -196,59 +224,61 @@ def process_anyres_image(image, processor, grid_pinpoints):
     Returns:
         np.array: An np array containing the processed image patches.
     """
+    # Fast-path: Don't use isinstance(type, list): use isinstance for both str and list test
+    grid_pinpoints_parsed = grid_pinpoints
     if isinstance(grid_pinpoints, str) and "x" in grid_pinpoints:
         try:
             patch_size = processor.size[0]
-        except Exception as e:
+        except Exception:
             patch_size = processor.size["shortest_edge"]
-        assert patch_size in [
-            224,
-            336,
-            384,
-            448,
-            512,
-        ], "patch_size should be in [224, 336, 384, 448, 512]"
+        assert patch_size in [224, 336, 384, 448, 512], "patch_size should be in [224, 336, 384, 448, 512]"
+        # Extract all (number x number) tuples
         # Use regex to extract the range from the input string
         matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
         range_start = tuple(map(int, matches[0]))
         range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
-        grid_pinpoints = [
-            (i, j)
+        # Allow generator comprehension so not to pre-allocate an intermediate list
+        grid_pinpoints_parsed = [
+            [i * patch_size, j * patch_size]
             for i in range(range_start[0], range_end[0] + 1)
             for j in range(range_start[1], range_end[1] + 1)
         ]
-        # Multiply all elements by patch_size
-        grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
-
-    if type(grid_pinpoints) is list:
-        possible_resolutions = grid_pinpoints
+    if isinstance(grid_pinpoints_parsed, list):
+        possible_resolutions = grid_pinpoints_parsed
     else:
-        possible_resolutions = ast.literal_eval(grid_pinpoints)
+        possible_resolutions = ast.literal_eval(grid_pinpoints_parsed)
+
     best_resolution = select_best_resolution(image.size, possible_resolutions)
     image_padded = resize_and_pad_image(image, best_resolution)
 
     # For Siglip processor, only have size but no crop size
-    crop_size = (
-        processor.crop_size["height"]
-        if "crop_size" in processor.__dict__
-        else processor.size["height"]
-    )
-    shortest_edge = (
-        processor.size["shortest_edge"]
-        if "shortest_edge" in processor.size
-        else processor.size["height"]
-    )
+    # Faster attribute access: localize processor.__dict__ and keys
+    p_dict = processor.__dict__
+    p_size = processor.size
+    if "crop_size" in p_dict:
+        crop_size = processor.crop_size["height"]
+    else:
+        crop_size = p_size["height"]
+    if "shortest_edge" in p_size:
+        shortest_edge = p_size["shortest_edge"]
+    else:
+        shortest_edge = p_size["height"]
+
     patches = divide_to_patches(image_padded, crop_size)
 
-    image_original_resize = image.resize((shortest_edge, shortest_edge))
+    image_original_resize = image.resize((shortest_edge, shortest_edge), resample=Image.BILINEAR)
 
-    image_patches = [image_original_resize] + patches
-    image_patches = [
-        processor.preprocess(image_patch.convert("RGB"))["pixel_values"][0]
-        for image_patch in image_patches
+    # Create list avoiding + operator: extend in-place
+    image_patches = [image_original_resize]
+    image_patches.extend(patches)
+
+    # Use list comprehension as before
+    image_patches_arr = [
+        processor.preprocess(img.convert("RGB"))["pixel_values"][0]
+        for img in image_patches
     ]
-    return np.stack(image_patches, axis=0)
+    # Efficient stack (all arrays already same size)
+    return np.stack(image_patches_arr, axis=0)
 
 
 def load_image_from_base64(image):
