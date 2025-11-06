@@ -59,7 +59,7 @@ def check_environments():
 
 
 def get_abs_err(x, y):
-    return (x.detach() - y.detach()).flatten().abs().max().item()
+    return (x.detach() - y.detach()).abs().max().item()
 
 
 def get_err_ratio(x, y):
