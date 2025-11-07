@@ -612,17 +612,12 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         )
 
     def _compute_inv_freq(self, rescale_factors: List[float]) -> torch.Tensor:
-        rescale_factors = torch.tensor(rescale_factors, dtype=torch.float32)
-        inv_freq = 1.0 / (
-            rescale_factors
-            * (
-                self.base
-                ** (
-                    torch.arange(0, self.rotary_dim, 2, dtype=torch.float)
-                    / self.rotary_dim
-                )
-            )
-        )
+        # Avoid re-creating tensors unnecessarily; store in fast native format
+        # Avoid recomputation of arange and floating division for every entry
+        rescale_factors_tensor = torch.tensor(rescale_factors, dtype=torch.float32)
+        exponent = torch.arange(0, self.rotary_dim, 2, dtype=torch.float) / self.rotary_dim
+        base_pow = torch.pow(self.base, exponent)
+        inv_freq = 1.0 / (rescale_factors_tensor * base_pow)
         return inv_freq
 
     def _compute_cos_sin_cache(
@@ -632,10 +627,17 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         mscale: float,
     ) -> torch.Tensor:
         inv_freq = self._compute_inv_freq(rescale_factors)
-        t = torch.arange(max_position_embeddings, dtype=torch.float)
-        freqs = torch.einsum("i,j -> ij", t, inv_freq)
-        cos = freqs.cos() * mscale
-        sin = freqs.sin() * mscale
+        # Use torch.arange directly in fp32 format and reuse
+        t = torch.arange(max_position_embeddings, dtype=torch.float32)
+        # Use torch.outer for more efficient computation than einsum
+        freqs = torch.outer(t, inv_freq)
+
+        # Compute cos/sin in-place for memory savings (use .mul_ for scaling)
+        cos = freqs.cos()
+        sin = freqs.sin()
+        cos.mul_(mscale)
+        sin.mul_(mscale)
+
         cache = torch.cat((cos, sin), dim=-1)
         return cache
 
