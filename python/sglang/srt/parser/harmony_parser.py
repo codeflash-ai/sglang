@@ -212,20 +212,36 @@ class CanonicalStrategy:
         channel_pos = None
         message_pos = None
 
-        for i in range(pos, len(tokens)):
-            if tokens[i].type == "CHANNEL" and channel_pos is None:
-                channel_pos = i
-            elif tokens[i].type == "MESSAGE":
-                message_pos = i
+        # Fast scan for <|channel|> and first <|message|> after it
+        idx = pos
+        n = len(tokens)
+        # Find the first CHANNEL after pos
+        while idx < n:
+            t = tokens[idx]
+            if t.type == "CHANNEL":
+                channel_pos = idx
                 break
+            idx += 1
 
-        if channel_pos is None or message_pos is None:
+        if channel_pos is None:
+            return None
+
+        # Find the shortest distance to a MESSAGE after channel
+        idx = channel_pos + 1
+        while idx < n:
+            t = tokens[idx]
+            if t.type == "MESSAGE":
+                message_pos = idx
+                break
+            idx += 1
+
+        if message_pos is None:
             return None
 
         # Extract channel type
         channel_start = (
             tokens[channel_pos + 1].start
-            if channel_pos + 1 < len(tokens)
+            if channel_pos + 1 < n
             else tokens[channel_pos].end
         )
         channel_end = tokens[message_pos].start
@@ -247,15 +263,14 @@ class CanonicalStrategy:
         """Extract channel type from header, ignoring other attributes like to=... or <|constrain|>..."""
         # Look for channel type at the start of the header (case insensitive)
         header_clean = header_text.strip()
-
-        if header_clean.lower().startswith("analysis"):
+        lheader = header_clean.lower()
+        if lheader.startswith("analysis"):
             return "analysis"
-        elif header_clean.lower().startswith("commentary"):
+        if lheader.startswith("commentary"):
             return "commentary"
-        elif header_clean.lower().startswith("final"):
+        if lheader.startswith("final"):
             return "final"
-        else:
-            return None  # Unknown channel type
+        return None  # Unknown channel type
 
     def _parse_block(
         self, text: str, tokens: List[Token], start_pos: int
