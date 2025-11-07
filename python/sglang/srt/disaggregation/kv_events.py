@@ -298,17 +298,18 @@ class ZmqEventPublisher(EventPublisher):
         client_id, _, start_seq_bytes = frame
         start_seq = int.from_bytes(start_seq_bytes, "big")
 
+        send_multipart = self._replay.send_multipart
         for seq, buf in self._buffer:
             if seq >= start_seq:
                 # [identity, empty_delim, seq_bytes, payload]
                 # (identity, empty_delim) are stripped off by the router
                 # receiving payload is (seq_bytes, payload)
-                self._replay.send_multipart(
+                send_multipart(
                     (client_id, b"", seq.to_bytes(8, "big"), buf)
                 )
         # Send end of sequence marker
-        # receiving payload is (-1, b""")
-        self._replay.send_multipart((client_id, b"", self.END_SEQ, b""))
+        # receiving payload is (-1, b"")
+        send_multipart((client_id, b"", self.END_SEQ, b""))
 
     @staticmethod
     def offset_endpoint_port(
