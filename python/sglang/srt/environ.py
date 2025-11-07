@@ -38,7 +38,7 @@ class EnvField:
 
     def is_set(self):
         # NOTE: If None is manually set, it is considered as set.
-        return self.name in os.environ or self._set_to_none
+        return self._set_to_none or self.name in os.environ
 
     def get_set_value_or(self, or_value: Any):
         # NOTE: Ugly usage, but only way to get custom default value.
