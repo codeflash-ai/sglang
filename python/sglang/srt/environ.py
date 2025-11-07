@@ -20,7 +20,7 @@ class EnvField:
         raise NotImplementedError()
 
     def get(self) -> Any:
-        value = os.getenv(self.name)
+        value = os.environ.get(self.name)
         if self._set_to_none:
             assert value is None
             return None
@@ -42,7 +42,13 @@ class EnvField:
 
     def get_set_value_or(self, or_value: Any):
         # NOTE: Ugly usage, but only way to get custom default value.
-        return self.get() if self.is_set() else or_value
+        # Inlined is_set to avoid attr lookups on hot path
+        env = os.environ
+        name = self.name
+        if name in env or self._set_to_none:
+            return self.get()
+        else:
+            return or_value
 
     def set(self, value: Any):
         if value is None:
