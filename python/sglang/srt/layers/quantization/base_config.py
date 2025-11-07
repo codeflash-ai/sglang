@@ -117,7 +117,7 @@ class QuantizationConfig(ABC):
     def __init__(self):
         super().__init__()
         # mapping is updated by models as they initialize
-        self.packed_modules_mapping: Dict[str, List[str]] = dict()
+        self.packed_modules_mapping: Dict[str, List[str]] = {}
 
     @abstractmethod
     def get_name(self) -> str:
@@ -175,10 +175,10 @@ class QuantizationConfig(ABC):
     @staticmethod
     def get_from_keys_or(config: Dict[str, Any], keys: List[str], default: Any) -> Any:
         """Get a optional value from the model's quantization config."""
-        try:
-            return QuantizationConfig.get_from_keys(config, keys)
-        except ValueError:
-            return default
+        for key in keys:
+            if key in config:
+                return config[key]
+        return default
 
     @abstractmethod
     def get_quant_method(
