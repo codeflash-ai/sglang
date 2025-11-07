@@ -206,8 +206,13 @@ def compute_dp_attention_local_info(
         return tp_rank, tp_size, 0
 
     local_tp_size = moe_dense_tp_size if moe_dense_tp_size else tp_size
+    divisor = tp_size // local_tp_size
+    # Use max built-in as-is: can't avoid as logic must be preserved
+    quotient = dp_size // divisor
+    local_dp_size = 1 if quotient < 1 else quotient
+
+    # Integer division and modulo remain for correctness
     local_tp_rank = tp_rank % local_tp_size
-    local_dp_size = max(1, dp_size // (tp_size // local_tp_size))
 
     local_attn_tp_size = local_tp_size // local_dp_size
     local_attn_dp_rank = local_tp_rank // local_attn_tp_size
