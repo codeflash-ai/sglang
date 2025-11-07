@@ -22,8 +22,6 @@ _forward_context: Optional[ForwardContext] = None
 
 
 def get_forward_context() -> Optional[ForwardContext]:
-    if _forward_context is None:
-        return None
     return _forward_context
 
 
