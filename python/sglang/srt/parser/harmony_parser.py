@@ -133,6 +133,7 @@ class CanonicalStrategy:
             "<|call|>",
             "<|return|>",
         ]
+        self._structural_tokens_set = set(self.guard_tokens)
 
     def parse(self, text: str) -> Tuple[List[Event], str]:
         events = []
@@ -403,17 +404,8 @@ class CanonicalStrategy:
 
     def _is_standalone_structural_token(self, content: str) -> bool:
         """Check if content is just a standalone structural token that should be filtered."""
-        content_stripped = content.strip()
-        structural_tokens = [
-            "<|start|>",
-            "<|channel|>",
-            "<|message|>",
-            "<|constrain|>",
-            "<|end|>",
-            "<|call|>",
-            "<|return|>",
-        ]
-        return content_stripped in structural_tokens
+        # Use cached set for O(1) lookup
+        return content.strip() in self._structural_tokens_set
 
 
 class TextStrategy:
