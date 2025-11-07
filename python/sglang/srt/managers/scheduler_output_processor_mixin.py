@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import torch
 
@@ -394,25 +394,26 @@ class SchedulerOutputProcessorMixin:
             # Multi-item scoring: use all logprobs as-is
             req.input_token_logprobs_val = input_token_logprobs
         else:
-            # Regular request: add None at start, remove last (sampling token)
-            req.input_token_logprobs_val = [None] + input_token_logprobs[:-1]
+            req.input_token_logprobs_val = [None]
+            if len(input_token_logprobs) > 1:
+                req.input_token_logprobs_val += input_token_logprobs[:-1]
+
+        # Precompute multi_item_delimiter and origin_input_ids slicing for reuse
+        slice_ids = req.origin_input_ids[req.logprob_start_len :]
 
         # Process logprob indices based on scoring type
         if is_multi_item_scoring:
-            # Multi-item scoring: only include delimiter token positions
-            relevant_tokens = req.origin_input_ids[req.logprob_start_len :]
-            input_token_logprobs_idx = [
-                token_id
-                for token_id in relevant_tokens
-                if token_id == self.server_args.multi_item_scoring_delimiter
-            ]
+            multi_item_delim = self.server_args.multi_item_scoring_delimiter
+            # Use list comprehension for better speed
+            input_token_logprobs_idx = [token_id for token_id in slice_ids if token_id == multi_item_delim]
         else:
-            # Regular request: include all tokens from logprob_start_len onwards
-            input_token_logprobs_idx = req.origin_input_ids[req.logprob_start_len :]
+            input_token_logprobs_idx = slice_ids
+
+        vocab_limit = self.model_config.vocab_size - 1
 
         # Clip padded hash values from image tokens to prevent detokenization errors
         req.input_token_logprobs_idx = [
-            x if x < self.model_config.vocab_size - 1 else 0
+            x if x < vocab_limit else 0
             for x in input_token_logprobs_idx
         ]
 
@@ -422,24 +423,25 @@ class SchedulerOutputProcessorMixin:
             return
 
         is_multi_item_scoring = self._is_multi_item_scoring(req)
+        # Initialize only once to prevent repeated attribute access
+        input_top_logprobs_val = [] if is_multi_item_scoring else [None]
+        input_top_logprobs_idx = [] if is_multi_item_scoring else [None]
 
-        # Initialize arrays - multi-item scoring starts empty, others start with None
-        req.input_top_logprobs_val = [] if is_multi_item_scoring else [None]
-        req.input_top_logprobs_idx = [] if is_multi_item_scoring else [None]
+        # Use local variable then assign to req for minor attribute speedup
+        temp_val = req.temp_input_top_logprobs_val
+        temp_idx = req.temp_input_top_logprobs_idx
+        if temp_val and temp_idx:
+            for val, idx in zip(temp_val, temp_idx, strict=True):
+                input_top_logprobs_val.extend(val)
+                input_top_logprobs_idx.extend(idx)
 
-        # Extend arrays with temp values
-        for val, idx in zip(
-            req.temp_input_top_logprobs_val,
-            req.temp_input_top_logprobs_idx,
-            strict=True,
-        ):
-            req.input_top_logprobs_val.extend(val)
-            req.input_top_logprobs_idx.extend(idx)
+        if not is_multi_item_scoring and input_top_logprobs_val:
+            input_top_logprobs_val.pop()
+            input_top_logprobs_idx.pop()
 
-        # Remove last token (sampling token) for non multi-item scoring requests
-        if not is_multi_item_scoring:
-            req.input_top_logprobs_val.pop()
-            req.input_top_logprobs_idx.pop()
+        req.input_top_logprobs_val = input_top_logprobs_val
+        req.input_top_logprobs_idx = input_top_logprobs_idx
+
 
         # Clean up temp storage
         req.temp_input_top_logprobs_idx = None
@@ -451,27 +453,28 @@ class SchedulerOutputProcessorMixin:
             return
 
         is_multi_item_scoring = self._is_multi_item_scoring(req)
+        input_token_ids_logprobs_val = [] if is_multi_item_scoring else [None]
+        input_token_ids_logprobs_idx = [] if is_multi_item_scoring else [None]
 
-        # Initialize arrays - multi-item scoring starts empty, others start with None
-        req.input_token_ids_logprobs_val = [] if is_multi_item_scoring else [None]
-        req.input_token_ids_logprobs_idx = [] if is_multi_item_scoring else [None]
+        temp_val = req.temp_input_token_ids_logprobs_val
+        temp_idx = req.temp_input_token_ids_logprobs_idx
+        if temp_val and temp_idx:
+            for val, idx in zip(temp_val, temp_idx, strict=True):
+                # Use torch.Tensor's .tolist() only if present, and avoid type checks inside list extend by upfront conversion
+                if isinstance(val, torch.Tensor):
+                    val_list = val.tolist()
+                else:
+                    val_list = val if isinstance(val, list) else [val]
+                input_token_ids_logprobs_val.extend(val_list)
+                input_token_ids_logprobs_idx.extend(idx)
 
-        # Process temp values - convert tensors to lists and extend arrays
-        for val, idx in zip(
-            req.temp_input_token_ids_logprobs_val,
-            req.temp_input_token_ids_logprobs_idx,
-            strict=True,
-        ):
-            val_list = val.tolist() if isinstance(val, torch.Tensor) else val
-            req.input_token_ids_logprobs_val.extend(
-                val_list if isinstance(val_list, list) else [val_list]
-            )
-            req.input_token_ids_logprobs_idx.extend(idx)
+        if not is_multi_item_scoring and input_token_ids_logprobs_val:
+            input_token_ids_logprobs_val.pop()
+            input_token_ids_logprobs_idx.pop()
 
-        # Remove last token (sampling token) for non multi-item scoring requests
-        if not is_multi_item_scoring:
-            req.input_token_ids_logprobs_val.pop()
-            req.input_token_ids_logprobs_idx.pop()
+        req.input_token_ids_logprobs_val = input_token_ids_logprobs_val
+        req.input_token_ids_logprobs_idx = input_token_ids_logprobs_idx
+
 
         # Clean up temp storage
         req.temp_input_token_ids_logprobs_idx = None
@@ -485,17 +488,13 @@ class SchedulerOutputProcessorMixin:
         """
         is_multi_item_scoring = self._is_multi_item_scoring(req)
 
+        slice_ids = req.origin_input_ids[req.logprob_start_len :]
         if is_multi_item_scoring:
-            # Multi-item scoring: count delimiter tokens from logprob_start_len onwards
-            relevant_tokens = req.origin_input_ids[req.logprob_start_len :]
-            return sum(
-                1
-                for token_id in relevant_tokens
-                if token_id == self.server_args.multi_item_scoring_delimiter
-            )
+            multi_item_delim = self.server_args.multi_item_scoring_delimiter
+            # Use list.count for direct counting
+            return slice_ids.count(multi_item_delim)
         else:
-            # Regular request: all tokens from logprob_start_len onwards
-            return len(req.origin_input_ids) - req.logprob_start_len
+            return len(slice_ids)
 
     def _calculate_num_input_logprobs(
         self, req: Req, extend_input_len: int, extend_logprob_start_len: int
@@ -552,8 +551,11 @@ class SchedulerOutputProcessorMixin:
                 prefill (e.g., computing input token logprobs).
         """
         assert output.input_token_logprobs is not None
-        if req.input_token_logprobs is None:
-            req.input_token_logprobs = []
+        # Fast path: minimize attribute lookup (cache to local)
+        req_input_token_logprobs = req.input_token_logprobs
+        if req_input_token_logprobs is None:
+            req_input_token_logprobs = []
+            req.input_token_logprobs = req_input_token_logprobs
         if req.temp_input_top_logprobs_val is None:
             req.temp_input_top_logprobs_val = []
         if req.temp_input_top_logprobs_idx is None:
@@ -572,11 +574,11 @@ class SchedulerOutputProcessorMixin:
 
         # Important for the performance.
         assert isinstance(output.input_token_logprobs, tuple)
-        input_token_logprobs: Tuple[int] = output.input_token_logprobs
-        input_token_logprobs = input_token_logprobs[
-            logprob_pt : logprob_pt + num_input_logprobs
-        ]
-        req.input_token_logprobs.extend(input_token_logprobs)
+        # Avoid tuple copying unless needed (slice only if num_input_logprobs != full length)
+        full_logprobs = output.input_token_logprobs
+        sliced_logprobs = full_logprobs[logprob_pt : logprob_pt + num_input_logprobs]
+        req_input_token_logprobs.extend(sliced_logprobs)
+
 
         if req.top_logprobs_num > 0:
             req.temp_input_top_logprobs_val.append(output.input_top_logprobs_val[i])
