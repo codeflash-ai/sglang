@@ -28,16 +28,23 @@ def prefix_hold(text: str, tokens: List[str]) -> Tuple[str, str]:
     """
     if not text:
         return "", ""
+    len_text = len(text)
     max_hold = 0
-    for tok in tokens:
-        if not tok:
-            continue
-        # Check for prefixes of tok in the suffix of text
-        L = min(len(tok) - 1, len(text))
-        for k in range(L, 0, -1):
-            if tok.startswith(text[-k:]):
-                max_hold = max(max_hold, k)
+    # Pre-filter tokens by length, ignore empty tokens
+    filtered_tokens = [tok for tok in tokens if tok]
+    # Collect all possible suffixes of text up to all token lengths
+    max_tok_len = 0
+    if filtered_tokens:
+        max_tok_len = max(len(tok) for tok in filtered_tokens)
+    for k in range(min(len_text, max_tok_len - 1), 0, -1):
+        suffix = text[-k:]
+        for tok in filtered_tokens:
+            if len(tok) > k and tok.startswith(suffix):
+                max_hold = k
+                # Found the largest possible k for this k value, no need to check smaller k
                 break
+        if max_hold:
+            break
     if max_hold == 0:
         return text, ""
     return text[:-max_hold], text[-max_hold:]
