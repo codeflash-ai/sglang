@@ -157,9 +157,13 @@ class MoeWNA16Config(QuantizationConfig):
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
-        if user_quant == "moe_wna16" and cls.is_moe_wna16_compatible(hf_quant_cfg):
-            return cls.get_name()
-        return None
+        # Inline fast path: Check user_quant before calling is_moe_wna16_compatible.
+        if user_quant != "moe_wna16":
+            return None
+        # On modern Python, using a direct call to the optimizable function.
+        if not cls._fast_is_moe_wna16_compatible(hf_quant_cfg):
+            return None
+        return cls.get_name()
 
     @classmethod
     def is_moe_wna16_compatible(cls, quant_config: Dict[str, Any]):
@@ -215,6 +219,33 @@ class MoeWNA16Config(QuantizationConfig):
         elif isinstance(layer, FusedMoE):
             return MoeWNA16Method(self)
         return None
+
+    @staticmethod
+    def _fast_is_moe_wna16_compatible(quant_config: Dict[str, Any]) -> bool:
+        # This helper avoids repeated global lookups for hot-path logic.
+        quant_method_raw = quant_config.get("quant_method", "")
+        quant_method = quant_method_raw.lower() if quant_method_raw else ""
+        num_bits = quant_config.get("bits")
+        desc_act = quant_config.get("desc_act")
+
+        # Minimize get_device_capability cost for non-awq/gptq
+        if quant_method not in ("gptq", "awq"):
+            return False
+
+        # Avoids importing or calling more if clearly not compatible.
+        if quant_method == "gptq":
+            return not desc_act and num_bits in (4, 8)
+
+        if quant_method == "awq" and num_bits == 4:
+            # Fast path: cache AWQ min cap, single call to get capability
+            capability_tuple = get_device_capability()
+            if capability_tuple is None or any(c is None for c in capability_tuple):
+                return False
+            device_capability = capability_tuple[0] * 10 + capability_tuple[1]
+            awq_min_capability = AWQConfig.get_min_capability()
+            if device_capability >= awq_min_capability:
+                return True
+        return False
 
 
 def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
