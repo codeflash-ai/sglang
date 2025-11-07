@@ -246,13 +246,13 @@ class CanonicalStrategy:
     def _extract_channel_type(self, header_text: str) -> Optional[str]:
         """Extract channel type from header, ignoring other attributes like to=... or <|constrain|>..."""
         # Look for channel type at the start of the header (case insensitive)
-        header_clean = header_text.strip()
+        header_clean = header_text.strip().lower()
 
-        if header_clean.lower().startswith("analysis"):
+        if header_clean.startswith("analysis"):
             return "analysis"
-        elif header_clean.lower().startswith("commentary"):
+        elif header_clean.startswith("commentary"):
             return "commentary"
-        elif header_clean.lower().startswith("final"):
+        elif header_clean.startswith("final"):
             return "final"
         else:
             return None  # Unknown channel type
