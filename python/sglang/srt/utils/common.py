@@ -74,8 +74,10 @@ import psutil
 import pybase64
 import requests
 import torch
+import torch._custom_op.impl
 import torch.distributed
 import torch.distributed as dist
+import torch.library
 import triton
 import zmq
 from fastapi.responses import ORJSONResponse
@@ -228,7 +230,6 @@ def support_triton(backend: str) -> bool:
 
 
 try:
-    import sgl_kernel
 
     is_intel_amx_backend_available = hasattr(
         torch.ops.sgl_kernel, "convert_weight_packed"
@@ -1556,7 +1557,6 @@ def get_hpu_memory_capacity():
 
 def get_npu_memory_capacity():
     try:
-        import torch_npu
 
         return torch.npu.mem_get_info()[1] // 1024 // 1024  # unit: MB
     except ImportError as e:
@@ -1743,7 +1743,6 @@ def get_device(device_id: Optional[int] = None) -> str:
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
                 if device_id == None:
@@ -1773,7 +1772,6 @@ def get_device_count() -> int:
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
                 return torch.hpu.device_count()
@@ -1790,6 +1788,7 @@ def get_device_core_count(device_id: int = 0) -> int:
     return 0
 
 
+@lru_cache(maxsize=1)
 def get_device_capability(device_id: int = 0) -> Tuple[int, int]:
     major, minor = None, None
     if hasattr(torch, "cuda") and torch.cuda.is_available():
@@ -2504,11 +2503,11 @@ def is_page_size_one(server_args):
 # TODO(hebiao064): Accelerate FA3 Spec Decode with topk > 1.
 # TODO(hebiao064): Improve the acc rate for FA3 Spec Decode with topk == 1 and page_size > 1.
 def is_no_spec_infer_or_topk_one(server_args):
-    return server_args.speculative_eagle_topk is None or (
-        server_args.speculative_eagle_topk is not None
-        and server_args.speculative_eagle_topk == 1
-        and is_page_size_one(server_args)
-    )
+    # Local variable caching for repeated attribute lookup optimization
+    topk = server_args.speculative_eagle_topk
+    # Inline page size check to avoid extra function call/frame overhead in hot path
+    page_size = server_args.page_size
+    return topk is None or (topk == 1 and page_size == 1)
 
 
 def is_fa3_default_architecture(hf_config):
