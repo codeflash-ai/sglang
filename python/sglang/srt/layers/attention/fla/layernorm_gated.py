@@ -195,29 +195,43 @@ def rms_norm_gated(
     """If z is not None, we do norm(x) * silu(z) if norm_before_gate, else norm(x * silu(z))"""
 
     x_shape_og = x.shape
-    # reshape input data into 2D tensor
-    x = x.reshape(-1, x.shape[-1])
-    if x.stride(-1) != 1:
-        x = x.contiguous()
+
+    # Avoid extra contiguous() call if x is already contiguous, and always create contiguous copy once if needed
+    needs_reshape = (len(x.shape) > 2) or (x.stride(-1) != 1)
+    if needs_reshape:
+        x_2d = x.reshape(-1, x.shape[-1]).contiguous() if x.stride(-1) != 1 else x.reshape(-1, x.shape[-1])
+    else:
+        x_2d = x
+
     if z is not None:
         assert z.shape == x_shape_og
-        z = z.reshape(-1, z.shape[-1])
-        if z.stride(-1) != 1:
-            z = z.contiguous()
-    weight = weight.contiguous()
-    if bias is not None:
+        needs_z_reshape = (len(z.shape) > 2) or (z.stride(-1) != 1)
+        if needs_z_reshape:
+            z_2d = z.reshape(-1, z.shape[-1]).contiguous() if z.stride(-1) != 1 else z.reshape(-1, z.shape[-1])
+        else:
+            z_2d = z
+    else:
+        z_2d = None
+
+    # Avoid repeated .contiguous() by always calling once only if not already contiguous
+    if not weight.is_contiguous():
+        weight = weight.contiguous()
+    if bias is not None and not bias.is_contiguous():
         bias = bias.contiguous()
     y, mean, rstd = _layer_norm_fwd(
-        x,
+        x_2d,
         weight,
         bias,
         eps,
-        z=z,
+        z=z_2d,
         group_size=group_size,
         norm_before_gate=norm_before_gate,
         is_rms_norm=is_rms_norm,
     )
-    return y.reshape(x_shape_og)
+    # Only reshape if old shape is not equal to 'y'
+    if y.shape != x_shape_og:
+        y = y.reshape(x_shape_og)
+    return y
 
 
 class LayerNormFn(torch.autograd.Function):
