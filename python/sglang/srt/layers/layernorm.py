@@ -346,7 +346,9 @@ class Gemma3RMSNorm(CustomOp):
         # Re-dispatch
 
     def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        squared = x * x
+        mean = torch.mean(squared, dim=-1, keepdim=True)
+        return x * torch.rsqrt(mean + self.eps)
 
     def forward_native(self, x):
         output = self._norm(x.float())
@@ -372,4 +374,14 @@ if not (
     logger.info(
         "sgl-kernel layernorm implementation is not available on current platform. Fallback to other kernel libraries."
     )
-    from vllm.model_executor.layers.layernorm import GemmaRMSNorm, RMSNorm
+    try:
+        from vllm.model_executor.layers.layernorm import GemmaRMSNorm, RMSNorm
+    except ImportError:
+
+        class GemmaRMSNorm:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        class RMSNorm:
+            def __init__(self, *args, **kwargs):
+                pass
