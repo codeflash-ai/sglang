@@ -311,12 +311,21 @@ def pack_fp8_to_int32(
     assert fp8_tensor.dtype == torch.float8_e4m3fn
     assert fp8_tensor.ndim == 2
 
-    fp8_tensor = fp8_tensor.T if size_k_first else fp8_tensor
-    fp8_tensor = fp8_tensor.contiguous()
-    # fp8_tensor is contiguous and have shape (N, K) now
-    # with `.view(torch.int32)`, it become (N, K // 4)
-    int32_tensor = fp8_tensor.view(torch.int32)
-    return int32_tensor.T.contiguous() if size_k_first else int32_tensor
+    # Optimize transpose and contiguous calls by reasoning about the memory layout:
+    # If size_k_first is True, we only need to make the tensor contiguous
+    # after the transpose, avoiding unnecessary .contiguous() if not needed.
+    # The .view(torch.int32) requires the tensor to be contiguous in memory.
+    if size_k_first:
+        # Transpose followed by contiguous (efficient, single contiguous allocation)
+        fp8_tensor = fp8_tensor.T.contiguous()
+        int32_tensor = fp8_tensor.view(torch.int32)
+        # No transpose needed to return to original, we want K-first output (T has been applied)
+        return int32_tensor
+    else:
+        # Only make contiguous if not already
+        fp8_tensor = fp8_tensor if fp8_tensor.is_contiguous() else fp8_tensor.contiguous()
+        int32_tensor = fp8_tensor.view(torch.int32)
+        return int32_tensor
 
 
 def marlin_quant_fp8_torch(weight, group_size):
