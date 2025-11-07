@@ -207,15 +207,14 @@ class SchedulerOutputProcessorMixin:
         last_batch_allocate_lens_cpu = result.last_batch_allocate_lens.tolist()
         accept_lens_cpu = result.accept_lens.tolist()
         next_token_ids = result.next_token_ids.tolist()
-
-        predict_tokens = []
         num_draft_tokens = self.draft_worker.speculative_num_draft_tokens
-        for i, req in enumerate(batch.reqs):
-            predict_tokens.append(
-                next_token_ids[
-                    i * num_draft_tokens : i * num_draft_tokens + accept_lens_cpu[i]
-                ]
-            )
+        batch_reqs = batch.reqs
+        predict_tokens = [None] * len(batch_reqs)
+        for i, req in enumerate(batch_reqs):
+            start = i * num_draft_tokens
+            end = start + accept_lens_cpu[i]
+            predict_tokens[i] = next_token_ids[start:end]
+            # FIXME(lsyin): move this update elsewhere
             # FIXME(lsyin): move this update elsewhere
             req.spec_verify_ct += 1
 
