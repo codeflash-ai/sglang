@@ -18,6 +18,7 @@ from sglang.srt.distributed import (
     tensor_model_parallel_all_reduce,
 )
 from sglang.srt.utils import get_bool_env_var, is_hip
+import math
 
 if TYPE_CHECKING:
     from sglang.srt.configs.model_config import ModelConfig
@@ -382,7 +383,7 @@ def memcpy_triton_kernel(
 
 
 def prod(x):
-    return functools.reduce(lambda a, b: a * b, x, 1)
+    return math.prod(x)
 
 
 def memcpy_triton(dst, src, dim, offset, sz, offset_src):
