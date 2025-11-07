@@ -422,28 +422,32 @@ def get_processor(
     )
 
     # fix: for Qwen2-VL and Sarashina2Vision models, inject default 'size' if not provided.
-    if config.model_type in {"qwen2_vl", "sarashina2_vision"}:
-        if "size" not in kwargs:
-            kwargs["size"] = {"shortest_edge": 3136, "longest_edge": 1003520}
+    if config.model_type in {"qwen2_vl", "sarashina2_vision"} and "size" not in kwargs:
+        # Merge directly with minimal branch logic
+        kwargs["size"] = {"shortest_edge": 3136, "longest_edge": 1003520}
+
 
     if config.model_type not in {"llava", "clip"}:
         kwargs["use_fast"] = use_fast
+
+    # Precompute all arguments for from_pretrained only once when possible
+    pretrained_args = {
+        "trust_remote_code": trust_remote_code,
+        "revision": revision,
+        **kwargs,
+    }
     try:
         if "InternVL3_5" in tokenizer_name:
             processor = AutoTokenizer.from_pretrained(
                 tokenizer_name,
                 *args,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                **kwargs,
+                **pretrained_args,
             )
         else:
             processor = AutoProcessor.from_pretrained(
                 tokenizer_name,
                 *args,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                **kwargs,
+                **pretrained_args,
             )
 
     except ValueError as e:
@@ -452,16 +456,16 @@ def get_processor(
             logger.info(
                 f"Processor {tokenizer_name} does not have a slow version. Automatically use fast version"
             )
-            kwargs["use_fast"] = True
+            pretrained_args["use_fast"] = True
             processor = AutoProcessor.from_pretrained(
                 tokenizer_name,
                 *args,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                **kwargs,
+                **pretrained_args,
             )
         else:
-            raise e
+            raise
+
+    # Efficiently process stop tokens for tokenizer
     tokenizer = get_tokenizer_from_processor(processor)
 
     attach_additional_stop_token_ids(tokenizer)
