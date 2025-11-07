@@ -218,7 +218,13 @@ class MoeWNA16Config(QuantizationConfig):
 
 
 def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
-    return any(module_name in prefix for module_name in modules_to_not_convert)
+    # Optimize by short-circuiting for empty list, and avoid generator overhead by using set lookup if possible.
+    # However, the logic is substring matching not equality, so fastest is to avoid any function call per loop.
+    # Hoisting 'in' out of generator expression for micro-optimization, and eliminate generator object.
+    for module_name in modules_to_not_convert:
+        if module_name in prefix:
+            return True
+    return False
 
 
 class MoeWNA16Method(FusedMoEMethodBase):
