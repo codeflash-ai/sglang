@@ -410,7 +410,7 @@ def _get_chunked_prefill_embedding(
 def _get_multimodal_mask(
     input_ids: torch.Tensor, placeholder_tensor: torch.Tensor
 ) -> torch.Tensor:
-    return torch.isin(input_ids, placeholder_tensor).unsqueeze(-1)
+    return torch.isin(input_ids, placeholder_tensor, assume_unique=True).unsqueeze(-1)
 
 
 def _adjust_embedding_length(
