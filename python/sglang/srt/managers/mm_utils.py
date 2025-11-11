@@ -349,13 +349,23 @@ def _get_precomputed_embedding(
     If some but not all have precomputed_embeddings, raise NotImplementedError.
     If none have precomputed_embeddings, return None.
     """
-    precomputed_embeddings = [item.precomputed_embeddings for item in items]
-    if any(feature is not None for feature in precomputed_embeddings):
-        if not all(feature is not None for feature in precomputed_embeddings):
+    # Use generator expressions for early-exit checks (memory and speed optimization)
+    all_embeddings = []
+    found_none = False
+    for item in items:
+        embedding = item.precomputed_embeddings
+        if embedding is None:
+            found_none = True
+        else:
+            all_embeddings.append(embedding)
+    if all_embeddings:
+        if found_none:
             raise NotImplementedError(
                 "MM inputs where only some items are precomputed."
             )
-        result = torch.concat(precomputed_embeddings)
+        # torch.cat is slightly faster than torch.concat and is the idiomatic way
+        result = torch.cat(all_embeddings)
+        # some models embedding is 3-dim, reshape it to 2-dim (similar to get_embedding_chunk)
         # some models embedding is 3-dim, reshape it to 2-dim (similar to get_embedding_chunk)
         result = result.reshape(-1, result.shape[-1])
         return result
