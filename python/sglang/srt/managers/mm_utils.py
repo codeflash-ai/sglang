@@ -786,7 +786,7 @@ def tensor_hash(tensor_list) -> int:
         ]
         tensor = torch.concat(tensor_list)
     if tensor.is_cuda:
-        return gpu_tensor_hash(tensor.cuda())
+        return gpu_tensor_hash(tensor)
     tensor = tensor.detach().contiguous()
 
     if tensor.dtype == torch.bfloat16:
@@ -796,8 +796,7 @@ def tensor_hash(tensor_list) -> int:
     assert isinstance(tensor, torch.Tensor)
     tensor_cpu = tensor.cpu()
 
-    mv = memoryview(tensor_cpu.numpy())
-    return data_hash(mv.tobytes())
+    return data_hash(tensor_cpu.numpy().tobytes())
 
 
 def hash_feature(f):
@@ -806,9 +805,13 @@ def hash_feature(f):
             return tensor_hash(f)
         return data_hash(tuple(flatten_nested_list(f)))
     elif isinstance(f, np.ndarray):
-        arr = np.ascontiguousarray(f)
+        # Only use ascontiguousarray if necessary
+        if not f.flags['C_CONTIGUOUS']:
+            arr = np.ascontiguousarray(f)
+        else:
+            arr = f
         arr_bytes = arr.tobytes()
         return data_hash(arr_bytes)
     elif isinstance(f, torch.Tensor):
-        return tensor_hash([f])
+        return tensor_hash(f)
     return data_hash(f)
