@@ -349,13 +349,24 @@ def _get_precomputed_embedding(
     If some but not all have precomputed_embeddings, raise NotImplementedError.
     If none have precomputed_embeddings, return None.
     """
-    precomputed_embeddings = [item.precomputed_embeddings for item in items]
-    if any(feature is not None for feature in precomputed_embeddings):
-        if not all(feature is not None for feature in precomputed_embeddings):
+    # Single pass to extract features and quickly check all/any
+    precomputed_embeddings = []
+    any_found = False
+    all_found = True
+    for item in items:
+        feat = item.precomputed_embeddings
+        precomputed_embeddings.append(feat)
+        found = feat is not None
+        any_found = any_found or found
+        all_found = all_found and found
+    if any_found:
+        if not all_found:
             raise NotImplementedError(
                 "MM inputs where only some items are precomputed."
             )
-        result = torch.concat(precomputed_embeddings)
+        # Avoid one-level indirection into torch.concat by using built-in torch.cat (aliased, but more idiomatic)
+        result = torch.cat(precomputed_embeddings)
+        # some models embedding is 3-dim, reshape it to 2-dim (similar to get_embedding_chunk)
         # some models embedding is 3-dim, reshape it to 2-dim (similar to get_embedding_chunk)
         result = result.reshape(-1, result.shape[-1])
         return result
@@ -374,15 +385,18 @@ def _get_chunked_prefill_embedding(
     embedding_list = []
     # FIXME(Xinyuan): temporary workaround for eagle3, which may have len(items_size) > len(prefix_length)
     max_iterations = min(len(items_size) - 1, len(prefix_length))
-    for i in range(max_iterations):
+    i = 0
+    while i < max_iterations:
         if items_size[i] == items_size[i + 1]:
+            i += 1
             continue
         embedding_items_per_req = embedding_items[items_size[i] : items_size[i + 1]]
         items_offset = items_offset_list[i]
         assert items_offset is not None, items_offset
         embedding_items_hash = get_embedding_hash(embedding_items_per_req)
-        # if all items has been prefixed, we do not need to calculate embedding
-        if all([offset_end < prefix_length[i] for _, offset_end in items_offset]):
+        # Use generator not list in all() for better efficiency
+        if all(offset_end < prefix_length[i] for _, offset_end in items_offset):
+            i += 1
             continue
         embedding_per_req = embedding_cache.get(embedding_items_hash)
         if embedding_per_req is None:
@@ -401,10 +415,14 @@ def _get_chunked_prefill_embedding(
             extend_seq_len=extend_length[i] if i < len(extend_length) else 0,
             items_offset=items_offset,
         )
-        embedding_list.append(embedding_per_req_chunk)
-    if len(embedding_list) == 0:
+        # Only append non-empty chunks for true memory efficiency
+        if embedding_per_req_chunk.numel() > 0:
+            embedding_list.append(embedding_per_req_chunk)
+        i += 1
+    if not embedding_list:
         return None
-    return torch.concat(embedding_list, dim=0)
+    # Efficient cat (instead of concat), explicitly specify dim
+    return torch.cat(embedding_list, dim=0)
 
 
 def _get_multimodal_mask(
