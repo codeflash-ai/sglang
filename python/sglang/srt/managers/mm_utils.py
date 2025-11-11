@@ -210,25 +210,43 @@ class MultiModalityDataPaddingPatternTokenPairs(MultiModalityDataPaddingPattern)
                 "No data_token_pairs provided, RadixAttention might be influenced."
             )
             return input_ids
-        start_token_ids = {s for s, _e in data_token_pairs}
-        end_tokens_ids = {e for _s, e in data_token_pairs}
+
+        # Precompute the lookup sets once
+        start_token_ids = set()
+        end_token_ids = set()
+        for s, e in data_token_pairs:
+            start_token_ids.add(s)
+            end_token_ids.add(e)
+
 
         padded_ids = []
         last_idx = 0
         data_idx = -1
 
-        start_indices = [i for i, x in enumerate(input_ids) if x in start_token_ids]
-        end_indices = [i for i, x in enumerate(input_ids) if x in end_tokens_ids]
+        # Efficiently collect start/end indices in one pass
+        start_indices = []
+        end_indices = []
+        for idx, token in enumerate(input_ids):
+            if token in start_token_ids:
+                start_indices.append(idx)
+            if token in end_token_ids:
+                end_indices.append(idx)
+
 
         if len(start_indices) != len(end_indices):
             return input_ids
 
+
+        # Local variables for speed
+        data_start_token_ids = self.data_start_token_ids
+
         for start_idx, end_idx in zip(start_indices, end_indices):
             padded_ids.extend(input_ids[last_idx : start_idx + 1])
 
-            if input_ids[start_idx] in self.data_start_token_ids:
+            if input_ids[start_idx] in data_start_token_ids:
                 data_idx += 1
-                mm_inputs.data_offsets += [start_idx]
+                mm_inputs.data_offsets.append(start_idx)
+
 
             if data_idx >= len(pad_values):
                 data_idx = len(pad_values) - 1
