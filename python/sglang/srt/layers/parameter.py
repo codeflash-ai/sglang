@@ -99,12 +99,10 @@ class _ColumnvLLMParameter(BasevLLMParameter):
         if not use_presharded_weights:
             shard_size = self.data.shape[self.output_dim]
 
-            from sglang.srt.model_loader.weight_utils import (
-                narrow_padded_param_and_loaded_weight,
-            )
-
             if _is_cpu:
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
+                from sglang.srt.model_loader.weight_utils import \
+                    narrow_padded_param_and_loaded_weight
+                param_data, sliced_loaded_weight = narrow_padded_param_and_loaded_weight(
                     self.data,
                     loaded_weight,
                     0,  # param_data_start
@@ -112,8 +110,8 @@ class _ColumnvLLMParameter(BasevLLMParameter):
                     self.output_dim,
                     shard_size,
                 )
-                assert param_data.shape == loaded_weight.shape
-                param_data.copy_(loaded_weight)
+                assert param_data.shape == sliced_loaded_weight.shape
+                param_data.copy_(sliced_loaded_weight)
                 return
             else:
                 loaded_weight = loaded_weight.narrow(

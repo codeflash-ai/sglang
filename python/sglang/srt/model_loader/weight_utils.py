@@ -1163,24 +1163,27 @@ def narrow_padded_param_and_loaded_weight(
         shard_size, weight_start, loaded_weight.size(dim)
     )
 
+    # Fast path: skip expensive ops if no shard
+    if actual_shard_size <= 0:
+        # No real data to load; create a dummy tensor filled with zeros
+        loaded_weight = torch.zeros_like(param_data.narrow(dim, param_data_start, 0))
+        # Optionally reset padding; here, nothing to reset since actual_shard_size is 0
+        param_data = param_data.narrow(dim, param_data_start, 0)
+        return param_data, loaded_weight
+
     if narrow_weight:
-        if actual_shard_size > 0:
-            loaded_weight = loaded_weight.narrow(dim, weight_start, actual_shard_size)
-        else:
-            # No real data to load; create a dummy tensor filled with zeros
-            loaded_weight = torch.zeros_like(
-                param_data.narrow(dim, param_data_start, actual_shard_size)
-            )
+        loaded_weight = loaded_weight.narrow(dim, weight_start, actual_shard_size)
 
     # [Note] Reset padded weights to zero.
-    # If the actual shard size is less than the shard size, we need to reset
+    # If actual shard size is less than the shard size, we need to reset
     # the padded param_data to zero and then copy the loaded_weight into it.
-    reset_param_data_if_needed(
-        param_data,
-        dim,
-        param_data_start + actual_shard_size,
-        shard_size - actual_shard_size,
-    )
+    if shard_size > actual_shard_size:
+        reset_param_data_if_needed(
+            param_data,
+            dim,
+            param_data_start + actual_shard_size,
+            shard_size - actual_shard_size,
+        )
 
     param_data = param_data.narrow(dim, param_data_start, actual_shard_size)
 
