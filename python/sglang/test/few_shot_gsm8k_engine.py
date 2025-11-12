@@ -12,6 +12,8 @@ from sglang.lang.api import set_default_backend
 from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
 from sglang.utils import download_and_cache_file, dump_state_text, read_jsonl
 
+_numbers_pattern = re.compile(r"\d+")
+
 INVALID = -9999999
 
 
@@ -30,8 +32,10 @@ def get_few_shot_examples(lines, k):
 
 
 def get_answer_value(answer_str):
-    answer_str = answer_str.replace(",", "")
-    numbers = re.findall(r"\d+", answer_str)
+    # Avoid unnecessary string allocation if no commas
+    if ',' in answer_str:
+        answer_str = answer_str.replace(",", "")
+    numbers = _numbers_pattern.findall(answer_str)
     if len(numbers) < 1:
         return INVALID
     try:
