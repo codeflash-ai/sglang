@@ -11,19 +11,33 @@ from sglang.srt.connector import BaseFileConnector
 
 
 def _filter_allow(paths: list[str], patterns: list[str]) -> list[str]:
-    return [
-        path
-        for path in paths
-        if any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
-    ]
+    # Precompile patterns to fnmatch.translate() regex up front for repeated matching optimization
+    regexes = [fnmatch.translate(p) for p in patterns]
+    from re import compile
+    compiled = [compile(r).match for r in regexes]
+    # Avoid per-path function and for-loop overhead by using set and short-circuit logic
+    result: list[str] = []
+    for path in paths:
+        for matcher in compiled:
+            if matcher(path):
+                result.append(path)
+                break
+    return result
 
 
 def _filter_ignore(paths: list[str], patterns: list[str]) -> list[str]:
-    return [
-        path
-        for path in paths
-        if not any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
-    ]
+    # Precompile patterns to fnmatch.translate() regex up front for repeated matching optimization
+    regexes = [fnmatch.translate(p) for p in patterns]
+    from re import compile
+    compiled = [compile(r).match for r in regexes]
+    result: list[str] = []
+    for path in paths:
+        for matcher in compiled:
+            if matcher(path):
+                break
+        else:
+            result.append(path)
+    return result
 
 
 def list_files(
@@ -49,12 +63,23 @@ def list_files(
             - The third element is a list of files allowed or
               disallowed by pattern
     """
-    parts = path.removeprefix("s3://").split("/")
+    # Avoid multiple ".removeprefix" calls by slicing directly once (valid on >=py3.9)
+    if path.startswith("s3://"):
+        s = path[5:]
+    else:
+        s = path
+    parts = s.split("/")
     prefix = "/".join(parts[1:])
     bucket_name = parts[0]
 
     objects = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-    paths = [obj["Key"] for obj in objects.get("Contents", [])]
+    contents = objects.get("Contents")
+    # Avoid default list allocation if possible
+    if contents:
+        paths = [obj["Key"] for obj in contents]
+    else:
+        paths = []
+
 
     paths = _filter_ignore(paths, ["*/"])
     if allow_pattern is not None:
