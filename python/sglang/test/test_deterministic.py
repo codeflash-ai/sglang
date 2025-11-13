@@ -142,22 +142,30 @@ def send_mixed(args, batch_size: int):
     num_prompt_1 = random.randint(1, batch_size - num_long_prompt)
     num_prompt_2 = batch_size - num_prompt_1 - num_long_prompt
 
+
+    text = []
+    if num_prompt_1:
+        text.extend([PROMPT_1] * num_prompt_1)
+    if num_prompt_2:
+        text.extend([PROMPT_2] * num_prompt_2)
+    if num_long_prompt:
+        text.extend([LONG_PROMPT] * num_long_prompt)
+
+    sampling_params = {
+        "temperature": args.temperature,
+        "max_new_tokens": args.max_new_tokens,
+        "frequency_penalty": args.frequency_penalty,
+        "presence_penalty": args.presence_penalty,
+    }
+    if args.sampling_seed is not None:
+        sampling_params["sampling_seed"] = args.sampling_seed
+
     json_data = {
-        "text": [PROMPT_1] * num_prompt_1
-        + [PROMPT_2] * num_prompt_2
-        + [LONG_PROMPT] * num_long_prompt,
-        "sampling_params": {
-            "temperature": args.temperature,
-            "max_new_tokens": args.max_new_tokens,
-            "frequency_penalty": args.frequency_penalty,
-            "presence_penalty": args.presence_penalty,
-        },
+        "text": text,
+        "sampling_params": sampling_params,
         "return_logprob": args.return_logprob,
         "stream": args.stream,
     }
-
-    if args.sampling_seed is not None:
-        json_data["sampling_params"]["sampling_seed"] = args.sampling_seed
 
     response = requests.post(
         f"http://{args.host}:{args.port}/generate",
@@ -169,16 +177,13 @@ def send_mixed(args, batch_size: int):
         print(ret)
         return -1, -1, -1
 
-    prompt_1_ret = [ret[i]["text"] for i in range(num_prompt_1)]
-    prompt_2_ret = [
-        ret[i]["text"] for i in range(num_prompt_1, num_prompt_1 + num_prompt_2)
-    ]
-    long_prompt_ret = [
-        ret[i]["text"]
-        for i in range(
-            num_prompt_1 + num_prompt_2, num_prompt_1 + num_prompt_2 + num_long_prompt
-        )
-    ]
+    # Pre-extract all texts at once for speed and memory locality
+    texts = [r["text"] for r in ret]
+
+    # Use slicing instead of list comprehensions for prompt groups
+    prompt_1_ret = texts[:num_prompt_1]
+    prompt_2_ret = texts[num_prompt_1:num_prompt_1 + num_prompt_2]
+    long_prompt_ret = texts[num_prompt_1 + num_prompt_2:num_prompt_1 + num_prompt_2 + num_long_prompt]
 
     return prompt_1_ret, prompt_2_ret, long_prompt_ret
 
