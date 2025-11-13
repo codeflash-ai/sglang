@@ -186,12 +186,10 @@ def send_mixed(args, batch_size: int):
 def send_prefix(args, batch_size: int, prompts: List[str]):
     requests.post(f"http://{args.host}:{args.port}/flush_cache")
 
-    batch_data = []
-    sampled_indices = []
-    for _ in range(batch_size):
-        sampled_index = random.randint(0, len(prompts) - 1)
-        sampled_indices.append(sampled_index)
-        batch_data.append(prompts[sampled_index])
+    len_prompts = len(prompts)
+    sampled_indices = [random.randint(0, len_prompts - 1) for _ in range(batch_size)]
+    batch_data = [prompts[i] for i in sampled_indices]
+
 
     json_data = {
         "text": batch_data,
@@ -218,9 +216,10 @@ def send_prefix(args, batch_size: int, prompts: List[str]):
         print(ret)
         return -1, -1, -1
 
-    ret_dict = {i: [] for i in range(len(prompts))}
-    for i in range(batch_size):
-        ret_dict[sampled_indices[i]].append(ret[i]["text"])
+    # Preallocate return dictionary without generator expression
+    ret_dict = {i: [] for i in range(len_prompts)}
+    for idx, ret_item in zip(sampled_indices, ret):
+        ret_dict[idx].append(ret_item["text"])
 
     return ret_dict
 
