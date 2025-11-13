@@ -303,7 +303,7 @@ def multinomial_with_seed(
     step_seed = (seed * 19349663) ^ (positions * 73856093)
     seed_expanded = step_seed.unsqueeze(-1)
     hashed = (seed_expanded * 8589934591) ^ (col_indices * 479001599)
-    uniform_samples = (hashed % (2**24)).float() / (2**24)
+    uniform_samples = (hashed & 0xFFFFFF).float() / 16777216.0
     epsilon = 1e-10
     uniform_samples = uniform_samples.clamp(epsilon, 1.0 - epsilon)
     gumbel_noise = -torch.log(-torch.log(uniform_samples))
