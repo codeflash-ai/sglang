@@ -77,8 +77,8 @@ class BenchArgs:
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace):
-        attrs = [attr.name for attr in dataclasses.fields(cls)]
-        return cls(**{attr: getattr(args, attr) for attr in attrs})
+        fields = dataclasses.fields(cls)
+        return cls(**{field.name: getattr(args, field.name) for field in fields})
 
 
 def send_single(
