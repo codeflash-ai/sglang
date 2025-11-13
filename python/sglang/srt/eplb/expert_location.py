@@ -356,10 +356,14 @@ def compute_logical_to_rank_dispatch_physical_map(
     num_layers, num_logical_experts, _ = logical_to_all_physical_map.shape
     dtype = logical_to_all_physical_map.dtype
 
+
+    # preallocate output tensor on the device to avoid .to(device) repeatedly later
+    device = logical_to_all_physical_map.device
     logical_to_rank_dispatch_physical_map = torch.full(
         size=(num_gpus, num_layers, num_logical_experts),
         fill_value=-1,
         dtype=dtype,
+        device=device
     )
 
     for layer_id in range(num_layers):
@@ -367,47 +371,46 @@ def compute_logical_to_rank_dispatch_physical_map(
             candidate_physical_expert_ids = _logical_to_all_physical_raw(
                 logical_to_all_physical_map, layer_id, logical_expert_id
             )
-            output_partial = logical_to_rank_dispatch_physical_map[
-                :, layer_id, logical_expert_id
-            ]
+            output_partial = logical_to_rank_dispatch_physical_map[:, layer_id, logical_expert_id]
 
-            for gpu_id in range(num_gpus):
-                same_gpu_physical_expert_ids = [
-                    physical_expert_id
-                    for physical_expert_id in candidate_physical_expert_ids
-                    if _compute_gpu_id_of_physical_expert(
-                        physical_expert_id, num_local_gpu_physical_experts
-                    )
-                    == gpu_id
-                ]
-                if len(same_gpu_physical_expert_ids) > 0:
-                    # 1. Prefer same-GPU experts
-                    output_partial[gpu_id] = same_gpu_physical_expert_ids[0]
-                else:
+            candidate_array = candidate_physical_expert_ids
+            # Precompute all GPU/node assignment masks in canonical order to avoid looping over candidate_ids repeatedly
+            # This avoids repeated list comprehensions and small allocations
+            if candidate_array:
+                candidate_array_set = set(candidate_array)
+                # Map from physical_expert_id to gpu_id, node_id
+                mapping_gpu = {}
+                mapping_node = {}
+                for physical_expert_id in candidate_array:
+                    gpu_id = _compute_gpu_id_of_physical_expert(physical_expert_id, num_local_gpu_physical_experts)
+                    mapping_gpu.setdefault(gpu_id, []).append(physical_expert_id)
                     # 2. Otherwise, prefer same-node experts
                     node_id = gpu_id // num_gpus_per_node
-                    same_node_physical_expert_ids = [
-                        physical_expert_id
-                        for physical_expert_id in candidate_physical_expert_ids
-                        if _compute_node_id_of_physical_expert(
-                            physical_expert_id, num_local_node_physical_experts
-                        )
-                        == node_id
-                    ]
-                    if len(same_node_physical_expert_ids) > 0:
-                        output_partial[gpu_id] = same_node_physical_expert_ids[0]
+                    mapping_node.setdefault(node_id, []).append(physical_expert_id)
 
-            # 3. Fill remaining slots with fair random choices
-            num_remain = torch.sum(output_partial == -1).item()
-            output_partial[output_partial == -1] = torch.tensor(
-                _fair_choices(candidate_physical_expert_ids, k=num_remain, r=r),
-                dtype=dtype,
-            )
+                for gpu_id in range(num_gpus):
+                    # 1. Prefer same-GPU experts
+                    gpu_candidates = mapping_gpu.get(gpu_id)
+                    if gpu_candidates:
+                        output_partial[gpu_id] = gpu_candidates[0]
+                    else:
+                        # 2. Otherwise, prefer same-node experts
+                        node_id = gpu_id // num_gpus_per_node
+                        node_candidates = mapping_node.get(node_id)
+                        if node_candidates:
+                            output_partial[gpu_id] = node_candidates[0]
+                # 3. Fill remaining slots with fair random choices
+                remain_mask = (output_partial == -1)
+                num_remain = int(remain_mask.sum().item())
+                if num_remain > 0:
+                    choices = torch.tensor(_fair_choices(candidate_array, k=num_remain, r=r), dtype=dtype, device=device)
+                    output_partial[remain_mask] = choices
+
 
     assert torch.all(logical_to_rank_dispatch_physical_map != -1)
 
-    device = logical_to_all_physical_map.device
-    return logical_to_rank_dispatch_physical_map[ep_rank, :, :].to(device)
+    # logical_to_rank_dispatch_physical_map is on device already
+    return logical_to_rank_dispatch_physical_map[ep_rank, :, :]
 
 
 def _logical_to_all_physical_raw(
