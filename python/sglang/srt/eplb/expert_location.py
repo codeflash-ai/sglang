@@ -356,12 +356,21 @@ def compute_logical_to_rank_dispatch_physical_map(
     num_layers, num_logical_experts, _ = logical_to_all_physical_map.shape
     dtype = logical_to_all_physical_map.dtype
 
+
+    # Preallocate and use tensor on right device and with desired dtype for better efficiency
+    device = logical_to_all_physical_map.device
     logical_to_rank_dispatch_physical_map = torch.full(
         size=(num_gpus, num_layers, num_logical_experts),
         fill_value=-1,
         dtype=dtype,
+        device=device
     )
 
+
+    # Some index arrays that can be reused to avoid allocations
+    arange_gpus = list(range(num_gpus))
+
+    # --- Main loop. Optimize expert id selection logic ---
     for layer_id in range(num_layers):
         for logical_expert_id in range(num_logical_experts):
             candidate_physical_expert_ids = _logical_to_all_physical_raw(
@@ -371,55 +380,63 @@ def compute_logical_to_rank_dispatch_physical_map(
                 :, layer_id, logical_expert_id
             ]
 
-            for gpu_id in range(num_gpus):
-                same_gpu_physical_expert_ids = [
-                    physical_expert_id
-                    for physical_expert_id in candidate_physical_expert_ids
-                    if _compute_gpu_id_of_physical_expert(
-                        physical_expert_id, num_local_gpu_physical_experts
-                    )
-                    == gpu_id
-                ]
-                if len(same_gpu_physical_expert_ids) > 0:
-                    # 1. Prefer same-GPU experts
-                    output_partial[gpu_id] = same_gpu_physical_expert_ids[0]
-                else:
-                    # 2. Otherwise, prefer same-node experts
-                    node_id = gpu_id // num_gpus_per_node
-                    same_node_physical_expert_ids = [
-                        physical_expert_id
-                        for physical_expert_id in candidate_physical_expert_ids
-                        if _compute_node_id_of_physical_expert(
-                            physical_expert_id, num_local_node_physical_experts
-                        )
-                        == node_id
-                    ]
-                    if len(same_node_physical_expert_ids) > 0:
-                        output_partial[gpu_id] = same_node_physical_expert_ids[0]
+            # Precompute all GPU and node ids of all candidate experts to avoid repeated computation
+            # These are local (per-layer/logical expert) and cheap
+            candidate_gpu_ids = [
+                _compute_gpu_id_of_physical_expert(
+                    physical_expert_id, num_local_gpu_physical_experts
+                )
+                for physical_expert_id in candidate_physical_expert_ids
+            ]
+            candidate_node_ids = [
+                _compute_node_id_of_physical_expert(
+                    physical_expert_id, num_local_node_physical_experts
+                )
+                for physical_expert_id in candidate_physical_expert_ids
+            ]
+
+            # Fast lookup for GPU and node id
+            for gpu_id in arange_gpus:
+                # 1. Prefer same-GPU experts
+                try:
+                    idx = candidate_gpu_ids.index(gpu_id)
+                    output_partial[gpu_id] = candidate_physical_expert_ids[idx]
+                    continue
+                except ValueError:
+                    pass
+                # 2. Otherwise, prefer same-node experts
+                node_id = gpu_id // num_gpus_per_node
+                try:
+                    idx = candidate_node_ids.index(node_id)
+                    output_partial[gpu_id] = candidate_physical_expert_ids[idx]
+                except ValueError:
+                    # leave as -1 for now
+                    pass
 
             # 3. Fill remaining slots with fair random choices
-            num_remain = torch.sum(output_partial == -1).item()
-            output_partial[output_partial == -1] = torch.tensor(
-                _fair_choices(candidate_physical_expert_ids, k=num_remain, r=r),
-                dtype=dtype,
-            )
+            mask_remain = output_partial == -1
+            num_remain = int(mask_remain.sum().item())
+            if num_remain > 0:
+                # Pre-allocate and fill tensor instead of assignment via fancy indexing
+                fair_choices = torch.tensor(
+                    _fair_choices(candidate_physical_expert_ids, k=num_remain, r=r),
+                    dtype=dtype, device=device
+                )
+                output_partial[mask_remain] = fair_choices
+
 
     assert torch.all(logical_to_rank_dispatch_physical_map != -1)
-
-    device = logical_to_all_physical_map.device
     return logical_to_rank_dispatch_physical_map[ep_rank, :, :].to(device)
 
 
 def _logical_to_all_physical_raw(
     logical_to_all_physical_map, layer_id: int, logical_expert_id: int
 ) -> List[int]:
-    return [
-        physical_expert_id
-        for physical_expert_id in logical_to_all_physical_map[
-            layer_id, logical_expert_id
-        ].tolist()
-        if physical_expert_id != -1
-    ]
+    # Use torch operations for fast filtering if many experts, but preserve semantics
+    arr = logical_to_all_physical_map[layer_id, logical_expert_id]
+    if torch.is_tensor(arr):
+        arr = arr.tolist()  # will never be device-bound for a 1D index
+    return [physical_expert_id for physical_expert_id in arr if physical_expert_id != -1]
 
 
 def _compute_gpu_id_of_physical_expert(
@@ -435,8 +452,16 @@ def _compute_node_id_of_physical_expert(
 
 
 def _fair_choices(arr: List, k: int, r: random.Random) -> List:
+    # Optimize for k == len(arr) * m for modest m (typical MoE usage)
+    if not arr:
+        return []
+    if k == 0:
+        return []
     quotient, remainder = divmod(k, len(arr))
-    ans = arr * quotient + r.sample(arr, k=remainder)
+    ans = arr * quotient
+    if remainder:
+        # Use random.choices for small remainder for perf, but must ensure fairness, so sample without replacement
+        ans += r.sample(arr, k=remainder)
     r.shuffle(ans)
     return ans
 
