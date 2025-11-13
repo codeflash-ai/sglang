@@ -391,59 +391,56 @@ def get_token_ids_logprobs_batch_optimized(
     device = logprobs.device
 
     # Step 1: Calculate lengths for each request, treating None as empty list
-    # Example: [[1, 3], [2], [0, 2, 4]] -> token_lengths = tensor([2, 1, 3])
-    token_lengths = torch.tensor(
-        [len(token_ids or []) for token_ids in token_ids_logprobs], device=device
-    )
-    total_tokens = int(token_lengths.sum().item())  # 2 + 1 + 3 = 6
+    token_lengths_list = [len(token_ids) if token_ids is not None else 0 for token_ids in token_ids_logprobs]
+    # Precompute the output list structure
+    output_token_ids_logprobs_val = [None] * batch_size
+    output_token_ids_logprobs_idx = [None] * batch_size
+    total_tokens = sum(token_lengths_list)
+
+    # Handle edge case where no tokens are requested
 
     # Handle edge case where no tokens are requested
     if total_tokens == 0:
-        return [logprobs.new_empty(0) for _ in token_ids_logprobs], [
-            [] for _ in token_ids_logprobs
-        ]
+        empty = logprobs.new_empty(0)
+        for i in range(batch_size):
+            output_token_ids_logprobs_val[i] = empty
+            output_token_ids_logprobs_idx[i] = []
+        return output_token_ids_logprobs_val, output_token_ids_logprobs_idx
 
-    # Step 2: Build flattened indices using torch operations
-    # Example: row_indices = [0, 0, 1, 2, 2, 2] (batch indices repeated by their lengths)
-    row_indices = torch.repeat_interleave(
-        torch.arange(batch_size, device=device), token_lengths
-    )
-    # Example: col_indices = [1, 3, 2, 0, 2, 4] (flattened token IDs from all requests)
-    col_indices = torch.tensor(
-        [
-            token_id
-            for token_ids in token_ids_logprobs
-            for token_id in (token_ids or [])
-        ],
-        device=device,
-        dtype=torch.long,
-    )
+    # Step 2: Prepare row_indices and flattened col_indices
+    token_lengths = torch.tensor(token_lengths_list, device=device)
+    row_indices = torch.repeat_interleave(torch.arange(batch_size, device=device), token_lengths)
+
+    # Avoid using list comprehension for col_indices: flatten once for efficiency
+    flat_indices = []
+    flat_indices_extend = flat_indices.extend
+    for token_ids in token_ids_logprobs:
+        if token_ids:
+            flat_indices_extend(token_ids)
+    col_indices = torch.tensor(flat_indices, device=device, dtype=torch.long)
+
+    # Step 3: Single vectorized gather operation
 
     # Step 3: Single vectorized gather operation
     # Example: logprobs[row_indices, col_indices] -> [-2.1, -3.0, -2.2, -2.0, -1.4, -1.6]
     gathered_logprobs = logprobs[row_indices, col_indices]
 
-    # Step 4: Split results back per request using torch operations
-    # Example: split tensor [6] into chunks of sizes [2, 1, 3] -> [tensor(2), tensor(1), tensor(3)]
-    split_logprobs = torch.split_with_sizes(
-        gathered_logprobs, token_lengths.tolist(), dim=0
-    )
-
-    # Step 5: Format output to match expected return structure
-    # Example: Convert split tensors back to list format with proper empty handling
-    # i=0: [1,3] -> append split_logprobs[0] and [1,3]
-    # i=1: [2] -> append split_logprobs[1] and [2]
-    # i=2: [0,2,4] -> append split_logprobs[2] and [0,2,4]
-    output_token_ids_logprobs_val = []
-    output_token_ids_logprobs_idx = []
-
-    for i, token_ids in enumerate(token_ids_logprobs):
-        if token_ids is not None and len(token_ids) > 0:
-            output_token_ids_logprobs_val.append(split_logprobs[i])
-            output_token_ids_logprobs_idx.append(token_ids)
+    # Step 4: Efficiently split and assign gathered_logprobs to the correct spots
+    # Precompute offsets for splitting without loops
+    split_ptrs = [0]
+    acc = 0
+    for ln in token_lengths_list:
+        acc += ln
+        split_ptrs.append(acc)
+    # Now assign slices directly
+    for i in range(batch_size):
+        ln = token_lengths_list[i]
+        if ln > 0:
+            output_token_ids_logprobs_val[i] = gathered_logprobs[split_ptrs[i]:split_ptrs[i+1]]
+            output_token_ids_logprobs_idx[i] = token_ids_logprobs[i]
         else:
-            output_token_ids_logprobs_val.append(logprobs.new_empty(0))
-            output_token_ids_logprobs_idx.append([])
+            output_token_ids_logprobs_val[i] = logprobs.new_empty(0)
+            output_token_ids_logprobs_idx[i] = []
 
     return output_token_ids_logprobs_val, output_token_ids_logprobs_idx
 
