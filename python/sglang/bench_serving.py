@@ -97,7 +97,7 @@ class RequestFuncOutput:
 
 
 def remove_prefix(text: str, prefix: str) -> str:
-    return text[len(prefix) :] if text.startswith(prefix) else text
+    return text.removeprefix(prefix)
 
 
 def remove_suffix(text: str, suffix: str) -> str:
