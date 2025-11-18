@@ -41,6 +41,8 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
+_CACHE_BASE = Path.home() / ".cache" / "sglang" / "benchmark"
+
 ASSISTANT_SUFFIX = "Assistant:"
 
 global args
@@ -1480,7 +1482,7 @@ def gen_prompt(tokenizer, token_num):
 
 def get_gen_prefix_cache_path(args, tokenizer):
     """Create cache directory under ~/.cache/sglang/benchmark"""
-    cache_dir = Path.home() / ".cache" / "sglang" / "benchmark"
+    cache_dir = _CACHE_BASE
 
     # Create a unique cache filename based on the generation parameters
     cache_key = (
