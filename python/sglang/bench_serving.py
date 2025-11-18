@@ -1473,7 +1473,13 @@ def sample_image_requests(
 
 def gen_prompt(tokenizer, token_num):
     """Generate a random prompt of specified token length using tokenizer vocabulary."""
-    all_available_tokens = list(tokenizer.get_vocab().values())
+    if not hasattr(gen_prompt, '_vocab_cache'):
+        gen_prompt._vocab_cache = {}
+    cache = gen_prompt._vocab_cache
+    key = id(tokenizer)
+    if key not in cache:
+        cache[key] = tuple(tokenizer.get_vocab().values())
+    all_available_tokens = cache[key]
     selected_tokens = random.choices(all_available_tokens, k=token_num)
     return tokenizer.decode(selected_tokens)
 
