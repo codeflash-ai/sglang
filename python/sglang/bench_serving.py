@@ -41,6 +41,13 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
+_resolution_to_size = {
+    "4k": (3840, 2160),
+    "1080p": (1920, 1080),
+    "720p": (1280, 720),
+    "360p": (640, 360),
+}
+
 ASSISTANT_SUFFIX = "Assistant:"
 
 global args
@@ -1297,21 +1304,19 @@ def parse_image_resolution(image_resolution: str) -> Tuple[int, int]:
     Supports presets '1080p', '720p', '360p' and custom 'heightxwidth' format
     (e.g., '1080x1920' means height=1080, width=1920).
     """
-    resolution_to_size = {
-        "4k": (3840, 2160),
-        "1080p": (1920, 1080),
-        "720p": (1280, 720),
-        "360p": (640, 360),
-    }
-    if image_resolution in resolution_to_size:
-        return resolution_to_size[image_resolution]
+    # Use the outer constant dict for performance
+    if image_resolution in _resolution_to_size:
+        return _resolution_to_size[image_resolution]
+
+    # Pre-strip whitespace before lowercasing for potentially better speed
 
     res = image_resolution.strip().lower()
     if "x" in res:
-        parts = res.split("x")
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            height = int(parts[0])
-            width = int(parts[1])
+        # Use partition for a slightly faster split for 'a x b' patterns, if present
+        left, sep, right = res.partition("x")
+        if sep and left.isdigit() and right.isdigit():
+            height = int(left)
+            width = int(right)
             if height > 0 and width > 0:
                 return (width, height)
 
