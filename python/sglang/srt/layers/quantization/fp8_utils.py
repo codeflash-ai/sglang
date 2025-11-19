@@ -6,6 +6,7 @@ from sglang.srt.layers.quantization import deep_gemm_wrapper
 from sglang.srt.layers.quantization.fp8_kernel import sglang_per_token_group_quant_fp8
 from sglang.srt.layers.quantization.mxfp4_tensor import MXFP4QuantizeUtil
 from sglang.srt.utils import is_sm100_supported, offloader
+from functools import lru_cache
 
 try:
     from vllm import _custom_ops as ops
@@ -60,17 +61,12 @@ TORCH_DEVICE_IDENTITY = None
 
 
 def use_rowwise_torch_scaled_mm():
-    _TORCH_VERSION = torch.__version__.split("+")[0]
-    try:
-        _TORCH_VERSION_TUPLE = tuple(map(int, _TORCH_VERSION.split(".")[:3]))
-    except ValueError:
-        _TORCH_VERSION_TUPLE = (0, 0, 0)
     if _is_hip:
         # The condition to determine if it is on a platform that supports
         # torch._scaled_mm rowwise feature.
         # The condition is determined once as the operations
         # are time consuming.
-        return get_device_capability() >= (9, 4) and _TORCH_VERSION_TUPLE >= (2, 7, 0)
+        return get_device_capability() >= (9, 4) and _get_torch_version_tuple() >= (2, 7, 0)
     return False
 
 
@@ -830,3 +826,11 @@ def can_auto_enable_marlin_fp8() -> bool:
         return 80 <= sm < 89
     except Exception:
         return False
+
+@lru_cache(maxsize=1)
+def _get_torch_version_tuple():
+    _TORCH_VERSION = torch.__version__.split("+")[0]
+    try:
+        return tuple(map(int, _TORCH_VERSION.split(".")[:3]))
+    except ValueError:
+        return (0, 0, 0)
