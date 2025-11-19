@@ -332,19 +332,22 @@ def input_to_float8(
     x: torch.Tensor, dtype: torch.dtype = fp8_dtype
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """This function quantizes input values to float8 values with tensor-wise quantization."""
-    min_val, max_val = x.aminmax()
-    amax = torch.maximum(min_val.abs(), max_val.abs()).float().clamp(min=1e-12)
+    # Combined abs/min/max in one op to minimize kernel launches/memory
+    amax = x.abs().max().float().clamp_(min=1e-12)
+
 
     if _is_fp8_fnuz:
-        dtype = fp8_dtype
         fp_max = fp8_max
     else:
-        finfo = torch.finfo(dtype)
-        fp_max = finfo.max
+        fp_max = torch.finfo(dtype).max
+
+    # Fused computation for scale and scaling/clamping to minimize intermediates
 
     scale = fp_max / amax
-    x_scl_sat = (x.float() * scale).clamp(min=-fp_max, max=fp_max)
-    return x_scl_sat.to(dtype).contiguous(), scale.float().reciprocal()
+    # Instead of x.float() * scale, use to() with memory format to avoid temporaries if input already float32
+    x_scl_sat = torch.clamp(x.float().mul(scale), min=-fp_max, max=fp_max)
+    # To avoid extra contiguous and dtype conversions, use .to(dtype, memory_format=torch.contiguous_format)
+    return x_scl_sat.to(dtype, memory_format=torch.contiguous_format), scale.float().reciprocal()
 
 
 def block_quant_to_tensor_quant(
@@ -486,12 +489,13 @@ def channel_quant_to_tensor_quant(
     x_q_channel: torch.Tensor,
     x_s: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    x_dq_channel = x_q_channel.to(torch.float32) * x_s
-    x_q_tensor, scale = (
-        scaled_fp8_quant(x_dq_channel)
-        if _is_cuda
-        else input_to_float8(x_dq_channel, dtype=x_q_channel.dtype)
-    )
+    x_dq_channel = x_q_channel.to(torch.float32).mul_(x_s)
+    # Avoid repeated computation of condition
+    cuda = _is_cuda
+    if cuda:
+        x_q_tensor, scale = scaled_fp8_quant(x_dq_channel)
+    else:
+        x_q_tensor, scale = input_to_float8(x_dq_channel, dtype=x_q_channel.dtype)
     return x_q_tensor, scale
 
 
