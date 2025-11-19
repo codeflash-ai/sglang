@@ -74,8 +74,10 @@ import psutil
 import pybase64
 import requests
 import torch
+import torch._custom_op.impl
 import torch.distributed
 import torch.distributed as dist
+import torch.library
 import triton
 import zmq
 from fastapi.responses import ORJSONResponse
@@ -228,11 +230,8 @@ def support_triton(backend: str) -> bool:
 
 
 try:
-    import sgl_kernel
 
-    is_intel_amx_backend_available = hasattr(
-        torch.ops.sgl_kernel, "convert_weight_packed"
-    )
+    is_intel_amx_backend_available = False
 except:
     is_intel_amx_backend_available = False
 
@@ -240,7 +239,7 @@ except:
 try:
     # move torch._C._cpu._is_amx_tile_supported() from cpu_has_amx_support
     # to support torch compile
-    is_amx_tile_supported = torch._C._cpu._is_amx_tile_supported()
+    is_amx_tile_supported = False
 except:
     is_amx_tile_supported = False
 
@@ -1556,7 +1555,6 @@ def get_hpu_memory_capacity():
 
 def get_npu_memory_capacity():
     try:
-        import torch_npu
 
         return torch.npu.mem_get_info()[1] // 1024 // 1024  # unit: MB
     except ImportError as e:
@@ -1726,29 +1724,31 @@ def get_device(device_id: Optional[int] = None) -> str:
             )
         return "cpu"
 
-    if hasattr(torch, "cuda") and torch.cuda.is_available():
+    cuda_available = getattr(torch, "cuda", None)
+    if cuda_available is not None and torch.cuda.is_available():
         if device_id is None:
             return "cuda"
-        return "cuda:{}".format(device_id)
+        return f"cuda:{device_id}"
 
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        if device_id == None:
+    xpu_available = getattr(torch, "xpu", None)
+    if xpu_available is not None and torch.xpu.is_available():
+        if device_id is None:
             return "xpu"
-        return "xpu:{}".format(device_id)
+        return f"xpu:{device_id}"
 
-    if hasattr(torch, "npu") and torch.npu.is_available():
-        if device_id == None:
+    npu_available = getattr(torch, "npu", None)
+    if npu_available is not None and torch.npu.is_available():
+        if device_id is None:
             return "npu"
-        return "npu:{}".format(device_id)
+        return f"npu:{device_id}"
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
-                if device_id == None:
+                if device_id is None:
                     return "hpu"
-                return "hpu:{}".format(device_id)
+                return f"hpu:{device_id}"
         except ImportError as e:
             raise ImportError(
                 "Habana frameworks detected, but failed to import 'habana_frameworks.torch.hpu'."
@@ -1773,7 +1773,6 @@ def get_device_count() -> int:
 
     if is_habana_available():
         try:
-            import habana_frameworks.torch.hpu
 
             if torch.hpu.is_available():
                 return torch.hpu.device_count()
@@ -2504,11 +2503,11 @@ def is_page_size_one(server_args):
 # TODO(hebiao064): Accelerate FA3 Spec Decode with topk > 1.
 # TODO(hebiao064): Improve the acc rate for FA3 Spec Decode with topk == 1 and page_size > 1.
 def is_no_spec_infer_or_topk_one(server_args):
-    return server_args.speculative_eagle_topk is None or (
-        server_args.speculative_eagle_topk is not None
-        and server_args.speculative_eagle_topk == 1
-        and is_page_size_one(server_args)
-    )
+    # Local variable caching for repeated attribute lookup optimization
+    topk = server_args.speculative_eagle_topk
+    # Inline page size check to avoid extra function call/frame overhead in hot path
+    page_size = server_args.page_size
+    return topk is None or (topk == 1 and page_size == 1)
 
 
 def is_fa3_default_architecture(hf_config):

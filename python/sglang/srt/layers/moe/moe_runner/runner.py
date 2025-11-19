@@ -59,24 +59,24 @@ class MoeRunner:
         if self.fused_func is not None:
             return self.fused_func(dispatch_output, quant_info, self.config)
 
-        dispatch_format = dispatch_output.format.value
-        runner_format = self.runner_core.runner_backend.value
-        self.pre_permute_func = PermuteMethodPool.get_pre_permute(
-            dispatch_format, runner_format
+        dispatch_format_value = dispatch_output.format.value
+        runner_format_value = self.runner_core.runner_backend.value
+        pre_permute_func = PermuteMethodPool.get_pre_permute(
+            dispatch_format_value, runner_format_value
         )
 
         running_state = {}
-        runner_input = self.pre_permute_func(
+        runner_input = pre_permute_func(
             dispatch_output, quant_info, self.config, running_state
         )
         runner_output = self.runner_core.run(runner_input, quant_info, running_state)
 
-        runner_format = self.runner_core.runner_backend.value
-        combine_format = dispatch_output.format.value
-        self.post_permute_func = PermuteMethodPool.get_post_permute(
-            runner_format, combine_format
+        runner_format_value = self.runner_core.runner_backend.value
+        combine_format_value = dispatch_output.format.value
+        post_permute_func = PermuteMethodPool.get_post_permute(
+            runner_format_value, combine_format_value
         )
-        combine_input = self.post_permute_func(
+        combine_input = post_permute_func(
             runner_output, quant_info, self.config, running_state
         )
 
