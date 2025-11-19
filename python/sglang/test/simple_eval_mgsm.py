@@ -20,6 +20,8 @@ from sglang.test.simple_eval_common import (
     SingleEvalResult,
 )
 
+_num_pattern = re.compile(r"\d+\.?\d*")
+
 ALL_LANGUAGES = ["bn", "de", "en", "es", "fr", "ja", "ru", "sw", "te", "th", "zh"]
 LATIN_LANGUAGES = ["de", "en", "es", "fr", "sw"]
 NON_LATIN_LANGUAGES = ["bn", "ja", "ru", "te", "th", "zh"]
@@ -91,13 +93,19 @@ LANG_TO_ANSWER_PREFIX = {
 def parse_answer(answer: str, answer_prefix: str) -> str:
     if answer_prefix not in answer:
         return ""
+    # Split once from the right for performance (find last occurrence)
+    try:
+        answer_text = answer.rsplit(answer_prefix, 1)[1].strip()
+    except IndexError:
+        return ""
 
-    answer_text = answer.split(answer_prefix)[-1].strip()
+    # Remove all ',' only if present, avoid copy if no commas
+    if ',' in answer_text:
+        answer_text = answer_text.replace(',', '')
 
-    # find all the numbers (including decimals) in the string
-    numbers = re.findall(r"\d+\.?\d*", answer_text.replace(",", ""))
-
-    # return the first number (removing trailing decimal point if present),
+    # Use precompiled regex for efficiency
+    numbers = _num_pattern.findall(answer_text)
+    # return the last number (removing trailing decimal point if present),
     # or an empty string if there were no numbers
     return numbers[-1].rstrip(".") if numbers else ""
 
