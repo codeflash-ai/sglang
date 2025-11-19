@@ -479,7 +479,10 @@ def per_block_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
 
 # COPIED FROM DeepGEMM
 def ceil_to_ue8m0(x: torch.Tensor):
-    return torch.pow(2.0, torch.ceil(torch.log2(x.abs())))
+    abs_x = x.abs()
+    log2_x = torch.log2(abs_x)
+    ceil_log2_x = torch.ceil(log2_x)
+    return torch.exp2(ceil_log2_x)
 
 
 def channel_quant_to_tensor_quant(
