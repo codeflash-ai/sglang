@@ -251,7 +251,8 @@ def deepgemm_w8a8_block_fp8_linear_with_fallback(
         q_input, weight, x_scale, weight_scale, block_size, output_dtype=output_dtype
     )
     if bias is not None:
-        output += bias
+        output.add_(bias)
+    # Use .to before .view for performance (guarantees contiguous output view)
     return output.to(dtype=output_dtype).view(*output_shape)
 
 
@@ -297,7 +298,8 @@ def triton_w8a8_block_fp8_linear(
         q_input, weight, x_scale, weight_scale, block_size, output_dtype=input_2d.dtype
     )
     if bias is not None:
-        output += bias
+        output.add_(bias)
+    # Use .to before .view for performance (guarantees contiguous output view)
     return output.to(dtype=input_2d.dtype).view(*output_shape)
 
 
