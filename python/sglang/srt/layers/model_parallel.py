@@ -135,21 +135,20 @@ def tensor_parallel(
     # No op if `_tp_plan` attribute does not exist under the module.
     # This is a helper function to be used with `model.apply` to recursively
     # parallelize a model.
-    def tplize(mod: torch.nn.Module) -> None:
+    stack = [module]
+    while stack:
+        mod = stack.pop()
         tp_plan = getattr(mod, "_tp_plan", None)
-        if tp_plan is None:
-            return
-        for child_name, tp_style in tp_plan.items():
-            submod = mod.get_submodule(child_name)
-            if tp_style == "Colwise":
-                parallelize_module(submod, device_mesh, ColwiseParallel())
-            elif tp_style == "Rowwise":
-                parallelize_module(submod, device_mesh, RowwiseParallelMaybeWait())
-            elif tp_style == "Colwise_Sharded":
-                parallelize_module(submod, device_mesh, ColwiseParallelSharded())
-            else:
-                raise ValueError(f"Unknown TP style {tp_style}")
-
-    # `apply` is a native method of `nn.Module` that recursively applies a
-    # function to every submodule.
-    module.apply(tplize)
+        if tp_plan is not None:
+            for child_name, tp_style in tp_plan.items():
+                submod = mod.get_submodule(child_name)
+                if tp_style == "Colwise":
+                    parallelize_module(submod, device_mesh, ColwiseParallel())
+                elif tp_style == "Rowwise":
+                    parallelize_module(submod, device_mesh, RowwiseParallelMaybeWait())
+                elif tp_style == "Colwise_Sharded":
+                    parallelize_module(submod, device_mesh, ColwiseParallelSharded())
+                else:
+                    raise ValueError(f"Unknown TP style {tp_style}")
+        if hasattr(mod, "_modules"):
+            stack.extend(mod._modules.values())
