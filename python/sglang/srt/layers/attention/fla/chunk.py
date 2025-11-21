@@ -126,7 +126,7 @@ def chunk_gated_delta_rule(
     head_first: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
 ):
-    r"""
+    """
     Args:
         q (torch.Tensor):
             queries of shape `[B, T, H, K]` if `head_first=False` else `[B, H, T, K]`.
@@ -202,9 +202,6 @@ def chunk_gated_delta_rule(
             "head_first is deprecated and will be removed in a future version. "
             "Please use head_first=False for now instead."
         )
-        q, k, v, beta, g = map(
-            lambda x: rearrange(x, "b h t ... -> b t h ..."), (q, k, v, beta, g)
-        )
     # if not head_first and q.shape[1] < q.shape[2]:
     #     warnings.warn(
     #         f"Input tensor shape suggests potential format mismatch: seq_len ({q.shape[1]}) < num_heads ({q.shape[2]}). "
@@ -218,13 +215,16 @@ def chunk_gated_delta_rule(
                 f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
             )
-        if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
+        if initial_state is not None and initial_state.shape[0] != (cu_seqlens.size(0) - 1):
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {cu_seqlens.size(0) - 1} rather than {initial_state.shape[0]}."
             )
     if scale is None:
-        scale = k.shape[-1] ** -0.5
+        # Use torch.rsqrt for improved performance and type stability, avoids conversion to python float
+        scale = torch.rsqrt(torch.tensor(k.shape[-1], device=k.device, dtype=k.dtype)).item()
+
+    # Directly call ChunkGatedDeltaRuleFunction.apply -- ensures all args are ready, avoids redundant map
     o, final_state = ChunkGatedDeltaRuleFunction.apply(
         q,
         k,
