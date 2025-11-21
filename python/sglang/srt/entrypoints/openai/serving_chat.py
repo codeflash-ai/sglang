@@ -778,20 +778,23 @@ class OpenAIServingChat(OpenAIServingBase):
             logprobs: LogProbs data from model
             use_token_index: True for non-streaming (use token_idx), False for streaming (use index 0)
         """
-        token_logprobs = []
+        n_tokens = len(logprobs.tokens)
+        token_logprobs = [None] * n_tokens
+        logprobs_tokens = logprobs.tokens
+        logprobs_token_logprobs = logprobs.token_logprobs
+        top_logprobs_list = logprobs.top_logprobs
 
-        for token_idx, (token, logprob) in enumerate(
-            zip(logprobs.tokens, logprobs.token_logprobs)
-        ):
+        for token_idx in range(n_tokens):
+            token = logprobs_tokens[token_idx]
+            logprob = logprobs_token_logprobs[token_idx]
             token_bytes = list(token.encode("utf-8"))
             top_logprobs = []
-            if logprobs.top_logprobs:
+            if top_logprobs_list:
                 # - Non-streaming (use_token_index=True): uses token_idx for full data
                 # - Streaming (use_token_index=False): uses index 0 for pre-sliced data
-                top_logprobs_idx = token_idx if use_token_index else 0
-                for top_token, top_logprob in logprobs.top_logprobs[
-                    top_logprobs_idx
-                ].items():
+                idx = token_idx if use_token_index else 0
+                top_logprob_dict = top_logprobs_list[idx]
+                for top_token, top_logprob in top_logprob_dict.items():
                     top_token_bytes = list(top_token.encode("utf-8"))
                     top_logprobs.append(
                         TopLogprob(
@@ -800,13 +803,11 @@ class OpenAIServingChat(OpenAIServingBase):
                             logprob=top_logprob,
                         )
                     )
-            token_logprobs.append(
-                ChatCompletionTokenLogprob(
-                    token=token,
-                    bytes=token_bytes,
-                    logprob=logprob,
-                    top_logprobs=top_logprobs,
-                )
+            token_logprobs[token_idx] = ChatCompletionTokenLogprob(
+                token=token,
+                bytes=token_bytes,
+                logprob=logprob,
+                top_logprobs=top_logprobs,
             )
 
         return token_logprobs
