@@ -1125,30 +1125,38 @@ class MooncakeKVSender(CommonKVSender):
             )
 
     def poll(self) -> KVPoll:
-        if self.conclude_state is None:
-            status = self.kv_mgr.check_status(self.bootstrap_room)
-            if status in (KVPoll.Success, KVPoll.Failed):
-                self.conclude_state = status
-            elif status == KVPoll.Bootstrapping:
-                if self.init_time is not None:
-                    now = time.time()
-                    elapsed = now - self.init_time
-                    if elapsed >= self.kv_mgr.bootstrap_timeout:
-                        logger.warning_once(
-                            "Some requests timed out when bootstrapping, "
-                            "which means prefill instances fail to receive the KV indices from the decode instance of this request. "
-                            "If a greater mean TTFT is acceptable, you can 'export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600' (10 minutes) to relax the timeout condition. "
-                        )
-                        self.kv_mgr.record_failure(
-                            self.bootstrap_room,
-                            f"Request {self.bootstrap_room} timed out after {elapsed:.1f}s in KVPoll.Bootstrapping",
-                        )
-                        self.conclude_state = KVPoll.Failed
-                        return KVPoll.Failed
+        # Fast path: conclude_state already set
+        conclude_state = self.conclude_state
+        if conclude_state is not None:
+            return conclude_state
 
-            return status
-        else:
-            return self.conclude_state
+        status = self.kv_mgr.check_status(self.bootstrap_room)
+        if status == KVPoll.Bootstrapping:
+            # Avoid repeated time.time() calls if timeout not possible
+            bootstrap_timeout = self.kv_mgr.bootstrap_timeout
+            # Only check for timeout if init_time is set and timeout is positive
+            init_time = self.init_time
+            if init_time is not None and bootstrap_timeout > 0:
+                now = time.time()
+                elapsed = now - init_time
+                if elapsed >= bootstrap_timeout:
+                    # Only acquire logger reference if we enter the slow path
+                    # (logger is likely defined at module level via import; reused as per original logic)
+                    logger.warning_once(
+                        "Some requests timed out when bootstrapping, "
+                        "which means prefill instances fail to receive the KV indices from the decode instance of this request. "
+                        "If a greater mean TTFT is acceptable, you can 'export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600' (10 minutes) to relax the timeout condition. "
+                    )
+                    self.kv_mgr.record_failure(
+                        self.bootstrap_room,
+                        f"Request {self.bootstrap_room} timed out after {elapsed:.1f}s in KVPoll.Bootstrapping",
+                    )
+                    self.conclude_state = KVPoll.Failed
+                    return KVPoll.Failed
+        elif status in (KVPoll.Success, KVPoll.Failed):
+            self.conclude_state = status
+
+        return status
 
     def clear(self) -> None:
         if self.bootstrap_room in self.kv_mgr.request_status:
