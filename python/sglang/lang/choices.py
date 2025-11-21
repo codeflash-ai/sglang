@@ -97,8 +97,10 @@ class GreedyTokenSelection(ChoicesSamplingMethod):
     def _greedy_selection(self, logprob_matrix, num_options, max_tokens):
         remaining = np.arange(num_options)
         for j in range(max_tokens):
-            max_logprob = np.max(logprob_matrix[remaining, j])
-            remaining = remaining[logprob_matrix[remaining, j] == max_logprob]
+            logprobs = logprob_matrix[remaining, j]
+            max_logprob = logprobs.max()
+            mask = logprobs == max_logprob
+            remaining = remaining[mask]
             if len(remaining) == 1:
                 break
         return remaining
