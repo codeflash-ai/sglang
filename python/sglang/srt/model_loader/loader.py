@@ -743,28 +743,35 @@ class ShardedStateLoader(BaseModelLoader):
         Filter out all tensors that share the same memory or a subset of the
         memory of another tensor.
         """
-        same_storage_groups: Dict[Any, List[Tuple[str, torch.Tensor]]] = (
-            collections.defaultdict(list)
-        )
+        # Precompute the data_ptr and end_ptr for all tensors that are eligible
+        TensorInfo = Tuple[str, torch.Tensor, int, int, bool]  # (key, tensor, start_ptr, end_ptr, is_contig)
+        same_storage_groups: Dict[Any, List[TensorInfo]] = collections.defaultdict(list)
         for key, tensor in tensors.items():
             if tensor.numel():
                 ptr = tensor.untyped_storage().data_ptr()
-                same_storage_groups[tensor.device, ptr].append((key, tensor))
+                start_ptr = tensor.data_ptr()
+                # Avoid expensive .view() for large tensors, use numel and storage_offset plus element_size.
+                # end_ptr = start_ptr + numel * element_size if is_contiguous else fallback to slow method
+                is_contig = tensor.is_contiguous()
+                if is_contig:
+                    end_ptr = start_ptr + tensor.numel() * tensor.element_size()
+                else:
+                    end_ptr = tensor.view(-1)[-1].data_ptr() + tensor.element_size()
+                same_storage_groups[tensor.device, ptr].append((key, tensor, start_ptr, end_ptr, is_contig))
 
-        def get_end_ptr(tensor: torch.Tensor) -> int:
-            return tensor.view(-1)[-1].data_ptr() + tensor.element_size()
 
         result: Dict[str, torch.Tensor] = {}
         for group in same_storage_groups.values():
-            for k, t in group:
-                a, b = t.data_ptr(), get_end_ptr(t)
-                for k2, t2 in group:
-                    if not t2.is_contiguous():
+            # Prepare a sorted group by key so "keep the one with the smaller key" can short-circuit
+            # Sorting by key also improves repeated comparison performance for symmetric tensors
+            group_sorted = sorted(group, key=lambda x: x[0])
+            for idx, (k, t, a, b, is_contig) in enumerate(group_sorted):
+                for k2, t2, a2, b2, is_contig2 in group_sorted:
+                    if not is_contig2:
                         continue
-                    a2, b2 = t2.data_ptr(), get_end_ptr(t2)
                     if a < a2 or b2 < b:
                         continue
-                    if a2 < a or b < b2 or not t.is_contiguous():
+                    if a2 < a or b < b2 or not is_contig:
                         break  # t2 covers strictly more memory than t.
                     if k2 < k:
                         # Same tensors, keep the one with the smaller key.
