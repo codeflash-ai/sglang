@@ -619,9 +619,9 @@ def safetensors_weights_iterator(
     ):
         if disable_mmap:
             with open(st_file, "rb") as f:
-                result = safetensors.torch.load(f.read())
-                for name, param in result.items():
-                    yield name, param
+                buf = f.read()
+            result = safetensors.torch.load(buf)
+            yield from result.items()
         else:
             with safetensors.safe_open(st_file, framework="pt", device="cpu") as f:
                 for name in f.keys():
