@@ -1919,6 +1919,10 @@ def get_model_loader(
 ) -> BaseModelLoader:
     """Get a model loader based on the load format."""
 
+
+    # Optimize lookup order by reducing repeated attribute access and using a local variable.
+    load_format = load_config.load_format
+    
     if (
         model_config
         and hasattr(model_config, "modelopt_quant")
@@ -1927,28 +1931,22 @@ def get_model_loader(
         logger.info("Using ModelOptModelLoader due to 'modelopt_quant' config.")
         return ModelOptModelLoader(load_config)
 
-    if isinstance(load_config.load_format, type):
-        return load_config.load_format(load_config)
+    # Instance and type checking upfront is fastest to avoid repeated checks
+    if isinstance(load_format, type):
+        return load_format(load_config)
 
-    if load_config.load_format == LoadFormat.DUMMY:
-        return DummyModelLoader(load_config)
-
-    if load_config.load_format == LoadFormat.SHARDED_STATE:
-        return ShardedStateLoader(load_config)
-
-    if load_config.load_format == LoadFormat.BITSANDBYTES:
-        return BitsAndBytesModelLoader(load_config)
-
-    if load_config.load_format == LoadFormat.GGUF:
-        return GGUFModelLoader(load_config)
-
-    if load_config.load_format == LoadFormat.LAYERED:
-        return LayeredModelLoader(load_config)
-
-    if load_config.load_format == LoadFormat.REMOTE:
-        return RemoteModelLoader(load_config)
-
-    if load_config.load_format == LoadFormat.REMOTE_INSTANCE:
-        return RemoteInstanceModelLoader(load_config)
+    # Use dictionary dispatch for load format handling to reduce if-elif chain overhead
+    _format_loader_map = {
+        LoadFormat.DUMMY: DummyModelLoader,
+        LoadFormat.SHARDED_STATE: ShardedStateLoader,
+        LoadFormat.BITSANDBYTES: BitsAndBytesModelLoader,
+        LoadFormat.GGUF: GGUFModelLoader,
+        LoadFormat.LAYERED: LayeredModelLoader,
+        LoadFormat.REMOTE: RemoteModelLoader,
+        LoadFormat.REMOTE_INSTANCE: RemoteInstanceModelLoader,
+    }
+    ModelLoaderCls = _format_loader_map.get(load_format)
+    if ModelLoaderCls is not None:
+        return ModelLoaderCls(load_config)
 
     return DefaultModelLoader(load_config)
