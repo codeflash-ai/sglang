@@ -20,12 +20,16 @@ class BatchedPenalizerOrchestrator:
         self.vocab_size = vocab_size
         self._batch_ref = weakref.ref(batch)
         self.device = batch.device
-        self.penalizers = {Penalizer: Penalizer(self) for Penalizer in penalizers}
+        # Use dictionary comprehension to avoid unnecessary dict creation
+        penalizers_dict = {}
 
         is_required = False
-        for penalizer in self.penalizers.values():
-            pen_is_required = penalizer.prepare_if_required()
-            is_required |= pen_is_required
+        for Penalizer in penalizers:
+            penalizer_instance = Penalizer(self)
+            penalizers_dict[Penalizer] = penalizer_instance
+            if penalizer_instance.prepare_if_required():
+                is_required = True
+        self.penalizers = penalizers_dict
         self.is_required = is_required
 
     @property
@@ -40,7 +44,9 @@ class BatchedPenalizerOrchestrator:
             self._batch_ref = weakref.ref(value)
 
     def reqs(self):
-        return self.batch.reqs
+        # Use self._batch_ref() to ensure retrieval of current batch object
+        batch = self._batch_ref()
+        return batch.reqs
 
     def cumulate_output_tokens(self, output_ids: torch.Tensor):
         """
