@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy
 import torch
 
+from sglang.srt.layers.linear import LinearBase
 from sglang.srt.layers.quantization.fp8_kernel import scaled_fp8_quant
+from sglang.srt.layers.quantization.unquant import (
+    UnquantizedEmbeddingMethod,
+    UnquantizedLinearMethod,
+)
+from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
 from sglang.srt.utils import is_cuda
 
 if TYPE_CHECKING:
@@ -271,25 +276,25 @@ def get_linear_quant_method(
     prefix: str,
     linear_method_cls: type,
 ):
-    from sglang.srt.layers.linear import LinearBase
-    from sglang.srt.layers.quantization.unquant import (
-        UnquantizedEmbeddingMethod,
-        UnquantizedLinearMethod,
-    )
-    from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
-
-    cloned_config = deepcopy(config)
     parallel_lm_head_quantized = (
-        isinstance(layer, ParallelLMHead) and cloned_config.lm_head_quantized
+        isinstance(layer, ParallelLMHead) and config.lm_head_quantized
     )
 
     if isinstance(layer, LinearBase) or parallel_lm_head_quantized:
-        # False = skip module, None = no override, else = Positive match
-        if get_dynamic_override(cloned_config, layer_name=prefix) is False:
+        if get_dynamic_override(config, layer_name=prefix) is False:
             if parallel_lm_head_quantized:
                 return UnquantizedEmbeddingMethod()
             return UnquantizedLinearMethod()
 
+        # Shallow copy to avoid mutating input config (deepcopy not needed if attribute assignment is sufficient)
+        # Only fields potentially changed in override_config are assigned, so .copy() is sufficient if attributes are only scalars/structs:
+        # If QuantizationConfig is known simple, use:
+        # cloned_config = config.__class__.__new__(config.__class__)
+        # cloned_config.__dict__ = config.__dict__.copy()
+        # But safest is to keep deepcopy if override_config mutates nested dicts
+        from copy import deepcopy
+
+        cloned_config = deepcopy(config)
         if prefix:
             # Dynamic per module/layer rules may override base config
             override_config(cloned_config, prefix=prefix)
