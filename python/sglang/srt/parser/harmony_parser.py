@@ -439,39 +439,52 @@ class TextStrategy:
         self.buffer_context = buffer
 
     def parse(self, text: str) -> Tuple[List[Event], str]:
-        events = []
+        events: List['Event'] = []
 
-        m = self.patterns["analysis_then_final"].match(text)
+        # Cache regex dict to local for micro-optimization (faster attribute access)
+        patterns = self.patterns
+
+        m = patterns["analysis_then_final"].match(text)
         if m:
             channel, reasoning, final = m.groups()
-            if channel.lower() == "analysis" and reasoning.strip():
-                events.append(Event("reasoning", reasoning.strip()))
-            elif channel.lower() == "commentary" and reasoning.strip():
-                events.append(Event("normal", reasoning.strip()))
-            if final.strip():
-                events.append(Event("normal", final.strip()))
+            channel_l = channel.lower()
+            reasoning_stripped = reasoning.strip()
+            if channel_l == "analysis" and reasoning_stripped:
+                events.append(Event("reasoning", reasoning_stripped))
+            elif channel_l == "commentary" and reasoning_stripped:
+                events.append(Event("normal", reasoning_stripped))
+            final_stripped = final.strip()
+            if final_stripped:
+                events.append(Event("normal", final_stripped))
             return events, ""
 
-        # If assistantfinal appears to be incomplete (e.g., 'assistantfin'), hold entire buffer
-        if re.search(
-            r"(?:^|\s)(?:assistant)?\s*(analysis|commentary)", text, re.IGNORECASE
-        ):
-            low = text.lower()
-            if "assistantfin" in low and "assistantfinal" not in low:
-                return events, text
+        # Avoid expensive regex search if not needed: do substring search first.
+        # This check only applies if analysis or commentary might be present.
+        # First, check if either trigger word is present (case-insensitive).
+        triggers = ("analysis", "commentary")
+        text_low = text.lower()
+        if any(t in text_low for t in triggers):
+            # Only then run full regex search (expensive).
+            if re.search(
+                r"(?:^|\s)(?:assistant)?\s*(analysis|commentary)", text, re.IGNORECASE
+            ):
+                if "assistantfin" in text_low and "assistantfinal" not in text_low:
+                    return events, text
 
-        m = self.patterns["final_only"].match(text)
+        m = patterns["final_only"].match(text)
         if m:
             final = m.group(1)
-            if final.strip():
-                events.append(Event("normal", final.strip()))
+            final_stripped = final.strip()
+            if final_stripped:
+                events.append(Event("normal", final_stripped))
             return events, ""
 
-        m = self.patterns["analysis_only"].match(text)
+        m = patterns["analysis_only"].match(text)
         if m:
             channel, content = m.groups()
+            channel_l = channel.lower()
             emit, hold = prefix_hold(content, ["assistantfinal"])
-            if channel.lower() == "analysis" and emit:
+            if channel_l == "analysis" and emit:
                 # Stream reasoning content as-is based on structural markers only.
                 events.append(Event("reasoning", emit))
                 # Keep the channel header in the remaining buffer to continue parsing
@@ -481,7 +494,7 @@ class TextStrategy:
                     return events, text[: m.start(2)] + hold
                 else:
                     return events, channel
-            elif channel.lower() == "commentary" and emit:
+            elif channel_l == "commentary" and emit:
                 # For commentary, stream as normal text. Preserve spaces unless holding.
                 content_out = emit if hold else emit.strip()
                 events.append(Event("normal", content_out))
