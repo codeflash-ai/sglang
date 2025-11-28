@@ -11,11 +11,23 @@ from sglang.srt.connector import BaseFileConnector
 
 
 def _filter_allow(paths: list[str], patterns: list[str]) -> list[str]:
-    return [
-        path
-        for path in paths
-        if any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
-    ]
+    # Use a precompiled matcher list to speed up repeated fnmatch checks
+    if not patterns:
+        return []
+
+    # Convert patterns to regexes once
+    matcher = [fnmatch.translate(pattern) for pattern in patterns]
+    import re
+    regexes = [re.compile(rx) for rx in matcher]
+
+    # For each path, if any regex matches, include the path
+    result = []
+    for path in paths:
+        for rx in regexes:
+            if rx.match(path):
+                result.append(path)
+                break
+    return result
 
 
 def _filter_ignore(paths: list[str], patterns: list[str]) -> list[str]:
