@@ -130,18 +130,37 @@ class MoeWNA16Config(QuantizationConfig):
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> MoeWNA16Config:
-        quant_method = cls.get_from_keys(config, ["quant_method"])
-        weight_bits = cls.get_from_keys(config, ["bits"])
-        group_size = cls.get_from_keys(config, ["group_size"])
-        lm_head_quantized = cls.get_from_keys_or(config, ["lm_head"], default=False)
+        # Accelerated/optimized extraction
+        quant_method = config.get("quant_method")
+        if quant_method is None:
+            raise ValueError(
+                f"Cannot find any of ['quant_method'] in the model's quantization config."
+            )
+        weight_bits = config.get("bits")
+        if weight_bits is None:
+            raise ValueError(
+                f"Cannot find any of ['bits'] in the model's quantization config."
+            )
+        group_size = config.get("group_size")
+        if group_size is None:
+            raise ValueError(
+                f"Cannot find any of ['group_size'] in the model's quantization config."
+            )
+        lm_head_quantized = config.get("lm_head", False)
         if quant_method == "gptq":
-            has_zp = not cls.get_from_keys(config, ["sym"])
+            if "sym" not in config:
+                raise ValueError(
+                    f"Cannot find any of ['sym'] in the model's quantization config."
+                )
+            has_zp = not config["sym"]
             modules_to_not_convert = []
         elif quant_method == "awq":
-            has_zp = cls.get_from_keys(config, ["zero_point"])
-            modules_to_not_convert = cls.get_from_keys_or(
-                config, ["modules_to_not_convert"], None
-            )
+            if "zero_point" not in config:
+                raise ValueError(
+                    f"Cannot find any of ['zero_point'] in the model's quantization config."
+                )
+            has_zp = config["zero_point"]
+            modules_to_not_convert = config.get("modules_to_not_convert", None)
         else:
             raise ValueError("moe_wna16 only support gptq and awq.")
 
