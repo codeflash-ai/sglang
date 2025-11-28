@@ -461,6 +461,9 @@ class Gemma3TextScaledWordEmbedding(nn.Embedding):
         self.embed_scale = embed_scale
 
     def forward(self, input_ids: torch.Tensor):
+        # Avoid unnecessary multiplication if embed_scale == 1.0
+        if self.embed_scale == 1.0:
+            return super().forward(input_ids)
         return super().forward(input_ids) * self.embed_scale
 
 
