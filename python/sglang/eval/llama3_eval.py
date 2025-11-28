@@ -16,6 +16,10 @@ from datasets import load_dataset
 from openai import AsyncOpenAI
 from tqdm import tqdm
 
+_compiled_pattern = re.compile(r"The final answer is (.+)\.?")
+
+_symbol_table = str.maketrans('', '', '%$')
+
 # Mapping providers to their clients and models
 provider_to_models = {
     "b10": {
@@ -170,12 +174,10 @@ def get_mmlu_cot_answer(response):
 
 
 def get_answer_gsm8k(response):
-    pattern = r"The final answer is (.+)\.?"
-    match = re.search(pattern, response.choices[0].text)
+    match = _compiled_pattern.search(response.choices[0].text)
     if match:
         s = match.group(1)
-        for ok_symbol in ["%", "$"]:
-            s = s.replace(ok_symbol, "")
+        s = s.translate(_symbol_table)
         return s
 
 
