@@ -304,17 +304,17 @@ def fused_recurrent_gated_delta_rule(
                 f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
             )
-        if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
+        if initial_state is not None and initial_state.shape[0] != cu_seqlens.numel() - 1:
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {cu_seqlens.numel() - 1} rather than {initial_state.shape[0]}."
             )
     if scale is None:
         scale = k.shape[-1] ** -0.5
     else:
         assert scale > 0, "scale must be positive"
     if beta is None:
-        beta = torch.ones_like(q[..., 0])
+        beta = q.new_ones(q.shape[:-1])
     o, final_state = FusedRecurrentFunction.apply(
         q,
         k,
