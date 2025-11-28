@@ -18,14 +18,21 @@ class BatchedPenalizerOrchestrator:
         penalizers: Set[Type["_BatchedPenalizer"]],
     ):
         self.vocab_size = vocab_size
+        # Store batch as weakref for memory efficiency
         self._batch_ref = weakref.ref(batch)
         self.device = batch.device
-        self.penalizers = {Penalizer: Penalizer(self) for Penalizer in penalizers}
 
+        # Preallocate penalizer list and compute is_required loop inline
+        penalizer_objs = []
         is_required = False
-        for penalizer in self.penalizers.values():
-            pen_is_required = penalizer.prepare_if_required()
-            is_required |= pen_is_required
+        for Penalizer in penalizers:
+            penalizer = Penalizer(self)
+            penalizer_objs.append((Penalizer, penalizer))
+            if penalizer.prepare_if_required():
+                is_required = True
+
+        # Construct penalizer mapping only once for performance
+        self.penalizers = {pen_type: pen_obj for pen_type, pen_obj in penalizer_objs}
         self.is_required = is_required
 
     @property
@@ -40,7 +47,9 @@ class BatchedPenalizerOrchestrator:
             self._batch_ref = weakref.ref(value)
 
     def reqs(self):
-        return self.batch.reqs
+        # Use weakref to access batch for possible improved GC behavior
+        batch = self._batch_ref()
+        return batch.reqs if batch is not None else None
 
     def cumulate_output_tokens(self, output_ids: torch.Tensor):
         """
