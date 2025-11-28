@@ -28,15 +28,12 @@ def may_get_weight_block_size(model_config, load_config):
 
 def get_moe_padding_size(weight_block_size):
     if weight_block_size is not None:
-        # See NOTE(HandH1998): To ensure proper alignment of the block-wise quantization scales, the output_size of the weights for both the gate and up layers must be divisible by block_n.
-        assert (
-            len(weight_block_size) == 2
-        ), "Only len(weight_block_size) == 2 is supported"
-        assert (
-            weight_block_size[0] == weight_block_size[1]
-        ), "Only weight_block_size[0] == weight_block_size[1] is supported"
-
-        return weight_block_size[0]
+        if len(weight_block_size) != 2:
+            raise AssertionError("Only len(weight_block_size) == 2 is supported")
+        first, second = weight_block_size
+        if first != second:
+            raise AssertionError("Only weight_block_size[0] == weight_block_size[1] is supported")
+        return first
 
     return DEFAULT_MOE_PADDING_SIZE
 
