@@ -828,12 +828,21 @@ class StreamExecutor:
 class ProgramState:
     """The state of an SGL program."""
 
-    def __init__(self, stream_executor: StreamExecutor):
+    def __init__(self, stream_executor):
         self.stream_executor = stream_executor
 
     def _role_common(self, name: str, expr: Optional[SglExpr] = None):
         if expr is not None:
-            role_expr = SglExprList([SglRoleBegin(name), expr, SglRoleEnd(name)])
+            # Cache role instances to avoid repeated instantiation
+            if not hasattr(self, '_role_cache'):
+                self._role_cache = {}
+            
+            cache_key = name
+            if cache_key not in self._role_cache:
+                self._role_cache[cache_key] = (SglRoleBegin(name), SglRoleEnd(name))
+            
+            role_begin, role_end = self._role_cache[cache_key]
+            role_expr = SglExprList([role_begin, expr, role_end])
             self.stream_executor.submit(role_expr)
             return role_expr
         else:
