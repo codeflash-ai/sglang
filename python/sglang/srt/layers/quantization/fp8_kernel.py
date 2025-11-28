@@ -62,11 +62,7 @@ if _is_cuda:
 if _is_hip:
     if _use_aiter:
         try:
-            from aiter import (  # v0.1.3
-                dynamic_per_tensor_quant,
-                dynamic_per_token_scaled_quant,
-                static_per_tensor_quant,
-            )
+            pass
         except ImportError:
             raise ImportError("aiter is required when SGLANG_USE_AITER is set to True")
     else:
@@ -1392,6 +1388,7 @@ if _is_hip:
         num_token_padding: Optional[int] = None,
         use_per_token_if_dynamic: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+
         assert input.ndim == 2, f"Expected 2D input tensor, got {input.ndim}D"
         shape = input.shape
         if num_token_padding:
@@ -1404,27 +1401,20 @@ if _is_hip:
                 scale = torch.empty(
                     (shape[0], 1), device=input.device, dtype=torch.float32
                 )
-                if _use_aiter:
-                    dynamic_per_token_scaled_quant(output, input, scale)
-                else:
-                    torch.ops._C.dynamic_per_token_scaled_fp8_quant(
-                        output, input.contiguous(), scale, None
-                    )
+                sgl_per_token_quant_fp8(input, output, scale)
             else:
                 scale = torch.zeros(1, device=input.device, dtype=torch.float32)
-                if _use_aiter:
-                    dynamic_per_tensor_quant(output, input, scale)
-                else:
-                    torch.ops._C.dynamic_scaled_fp8_quant(output, input, scale)
+                sgl_per_tensor_quant_fp8(
+                    input, output, scale, is_static=False
+                )  # False for dynamic
         else:
             # Static scaling
             assert (
                 scale.numel() == 1
             ), f"Expected scalar scale, got numel={scale.numel()}"
-            if _use_aiter:
-                static_per_tensor_quant(output, input, scale)
-            else:
-                torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+            sgl_per_tensor_quant_fp8(
+                input, output, scale, is_static=True
+            )  # True for static
 
         return output, scale
 
