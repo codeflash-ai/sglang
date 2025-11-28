@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 import torch
 
-from sglang.srt.layers import deep_gemm_wrapper
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.communicator import (
     CommunicateContext,
@@ -25,7 +24,7 @@ from sglang.srt.layers.moe.token_dispatcher import (
     DeepEPDispatcher,
     MooncakeEPDispatcher,
 )
-from sglang.srt.layers.moe.token_dispatcher.base import BaseDispatcher
+from sglang.srt.layers.quantization import deep_gemm_wrapper
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.model_executor.forward_batch_info import (
     ForwardBatch,
@@ -40,7 +39,6 @@ from sglang.srt.utils import BumpAllocator, empty_context, get_bool_env_var, is_
 
 if TYPE_CHECKING:
     from sglang.srt.layers.moe.token_dispatcher import DispatchOutput
-    from sglang.srt.single_batch_overlap import CombineOverlapArgs
     from sglang.srt.speculative.eagle_info import EagleVerifyInput
 
 _is_hip = is_hip()
@@ -70,7 +68,7 @@ def get_token_num_per_seq(
 
 # TODO: may smartly disable TBO when batch size is too small b/c it will slow down
 def compute_split_seq_index(
-    forward_mode: ForwardMode,
+    forward_mode: "ForwardMode",
     num_tokens: int,
     extend_lens: Optional[Sequence[int]],
     token_num_per_seq: Optional[int],
@@ -81,7 +79,7 @@ def compute_split_seq_index(
     elif forward_mode.is_target_verify() or forward_mode.is_decode():
         assert token_num_per_seq is not None
         return (num_tokens // token_num_per_seq) // 2
-    elif forward_mode.is_idle() or forward_mode.is_prebuilt():
+    elif forward_mode.is_idle():
         assert num_tokens == 0
         return 0
     else:
@@ -383,8 +381,6 @@ class TboDPAttentionPreparer:
                 or local_batch.forward_mode.is_decode()
             ):
                 num_tokens = local_batch.batch_size() * token_num_per_seq
-            elif local_batch.forward_mode.is_prebuilt():
-                num_tokens = 0
             else:
                 num_tokens = local_batch.extend_num_tokens
             self.local_tbo_split_seq_index = compute_split_seq_index(
@@ -411,8 +407,8 @@ class TboDPAttentionPreparer:
         return local_can_run_tbo, local_forward_mode
 
     def compute_output(self, partial_global_info):
-        local_can_run_tbo_aggregated = min(partial_global_info[:, 0].tolist())
-        forward_modes = partial_global_info[:, 1].tolist()
+        local_can_run_tbo_aggregated = min(partial_global_info[:, 0, 0].tolist())
+        forward_modes = partial_global_info[:, 0, 1].tolist()
 
         global_forward_mode, forward_mode_agree = self._compute_global_forward_mode(
             forward_modes
@@ -436,19 +432,28 @@ class TboDPAttentionPreparer:
 
     @staticmethod
     def _compute_global_forward_mode(forward_modes):
-        forward_modes_excluding_idle = [
-            x for x in forward_modes if x != ForwardMode.IDLE.value
-        ]
+        # Convert to tuple once for efficient iteration and .count use
+        idle_value = ForwardMode.IDLE.value
+        # Count non-idle modes in a single pass
+        forward_modes_excluding_idle = [x for x in forward_modes if x != idle_value]
+
 
         if not forward_modes_excluding_idle:
             return ForwardMode.IDLE, False
 
-        forward_mode_agree = TboDPAttentionPreparer._is_all_same(
-            forward_modes_excluding_idle
-        )
-        global_forward_mode = (
-            ForwardMode(forward_modes_excluding_idle[0]) if forward_mode_agree else None
-        )
+        first_mode = forward_modes_excluding_idle[0]
+        # Faster check: avoid list traversal if length == 1
+        if len(forward_modes_excluding_idle) == 1:
+            return ForwardMode(first_mode), True
+
+        # Use all() with generator (same as original but more direct)
+        forward_mode_agree = True
+        for value in forward_modes_excluding_idle[1:]:
+            if value != first_mode:
+                forward_mode_agree = False
+                break
+
+        global_forward_mode = ForwardMode(first_mode) if forward_mode_agree else None
         return global_forward_mode, forward_mode_agree
 
     @staticmethod
@@ -972,9 +977,8 @@ def _model_forward_tbo_merge_outputs(output_a, output_b):
 # -------------------------------- Utilities and wrappers ---------------------------------------
 
 
-class MaybeTboDeepEPDispatcher(BaseDispatcher):
+class MaybeTboDeepEPDispatcher:
     def __init__(self, **kwargs):
-        super().__init__()
         num_inner_dispatchers = 2 if is_tbo_enabled() else 1
         if get_moe_a2a_backend().is_deepep():
             self._inners = [
@@ -1005,20 +1009,3 @@ class MaybeTboDeepEPDispatcher(BaseDispatcher):
 
     def combine_b(self, **kwargs):
         return self._execute("combine_b", **kwargs)
-
-    def set_quant_config(self, quant_config: dict):
-        super().set_quant_config(quant_config)
-        for inner in self._inners:
-            inner.set_quant_config(quant_config)
-
-    def set_overlap_args(
-        self, combine_overlap_args: CombineOverlapArgs, meta_overlap_args: dict
-    ):
-        super().set_overlap_args(combine_overlap_args, meta_overlap_args)
-        for inner in self._inners:
-            inner.set_overlap_args(combine_overlap_args, meta_overlap_args)
-
-    def clear_overlap_args(self):
-        super().clear_overlap_args()
-        for inner in self._inners:
-            inner.clear_overlap_args()
