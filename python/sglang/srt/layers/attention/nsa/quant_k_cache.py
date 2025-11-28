@@ -30,38 +30,34 @@ def _quantize_k_cache_slow(
     assert h_k == 1
     input_k_cache = input_k_cache.squeeze(2)  # [num_blocks, block_size, d]
     input_elem_size = input_k_cache.element_size()
+    
+    # Precompute output shape and slices
+    out_shape = (num_blocks, block_size, dv + num_tiles * 4 + input_elem_size * (d - dv))
 
+    # Allocate quantization result tensor on CUDA (reuse memory for slice views)
     result = torch.empty(
-        (num_blocks, block_size, dv + num_tiles * 4 + input_elem_size * (d - dv)),
+        out_shape,
         dtype=torch.float8_e4m3fn,
         device=input_k_cache.device,
     )
     result_k_nope_part = result[..., :dv]
     result_k_scale_factor = result[..., dv : dv + num_tiles * 4].view(torch.float32)
     result_k_rope_part = result[..., dv + num_tiles * 4 :].view(input_k_cache.dtype)
+    # Use slice assignment for rope part (copies [num_blocks, block_size, d-dv])
     result_k_rope_part[:] = input_k_cache[..., dv:]
 
-    for tile_idx in range(0, num_tiles):
-        cur_scale_factors_inv = (
-            torch.abs(
-                input_k_cache[..., tile_idx * tile_size : (tile_idx + 1) * tile_size]
-            )
-            .max(dim=-1)
-            .values
-            / 448.0
-        )  # [num_blocks, block_size]
-        result_k_scale_factor[:, :, tile_idx] = cur_scale_factors_inv
+    # Stack list of tensors to avoid loop; do quantization in one batched op
+    # 1. Compute abs max per tile, shape [num_blocks, block_size, num_tiles]
+    tiles = input_k_cache[..., :dv].unfold(-1, tile_size, tile_size)  # [num_blocks, block_size, num_tiles, tile_size]
+    abs_max = torch.amax(torch.abs(tiles), dim=-1) / 448.0           # [num_blocks, block_size, num_tiles]
+    result_k_scale_factor.view(num_blocks, block_size, num_tiles)[:] = abs_max
 
-        cur_scale_factors_inv.unsqueeze_(-1)  # [num_blocks, block_size, 1]
-        cur_quantized_nope = (
-            input_k_cache[
-                ..., tile_idx * tile_size : (tile_idx + 1) * tile_size
-            ].float()
-            / cur_scale_factors_inv.float()
-        ).to(torch.float8_e4m3fn)
-        result_k_nope_part[..., tile_idx * tile_size : (tile_idx + 1) * tile_size] = (
-            cur_quantized_nope
-        )
+    # 2. Quantize all tiles together, assignment by slice
+    abs_max_unsq = abs_max.unsqueeze(-1)  # [num_blocks, block_size, num_tiles, 1]
+    quantized = (tiles.float() / abs_max_unsq.float()).to(torch.float8_e4m3fn)  # [num_blocks, block_size, num_tiles, tile_size]
+    # Move quantized tiles back into result_k_nope_part
+    quantized_flat = quantized.reshape(num_blocks, block_size, dv)
+    result_k_nope_part[:] = quantized_flat
 
     result = result.view(num_blocks, block_size, 1, -1)
     return result
