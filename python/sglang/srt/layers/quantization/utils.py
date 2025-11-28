@@ -551,7 +551,7 @@ def gptq_quantize_weights(
 def sort_weights(q_w: torch.Tensor, g_idx: torch.Tensor):
     orig_device = q_w.device
 
-    sort_indices = torch.argsort(g_idx).to(dtype=torch.int32)  # Sort based on g_idx
+    sort_indices = torch.argsort(g_idx)  # Sort based on g_idx
 
     g_idx = g_idx[sort_indices].contiguous()
     q_w = q_w[sort_indices, :].contiguous()
@@ -559,5 +559,5 @@ def sort_weights(q_w: torch.Tensor, g_idx: torch.Tensor):
     return (
         q_w.to(device=orig_device),
         g_idx.to(device=orig_device),
-        sort_indices.to(device=orig_device),
+        sort_indices.to(dtype=torch.int32, device=orig_device),
     )
