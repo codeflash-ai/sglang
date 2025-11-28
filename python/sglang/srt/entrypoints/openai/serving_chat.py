@@ -63,8 +63,10 @@ class OpenAIServingChat(OpenAIServingBase):
     ):
         super().__init__(tokenizer_manager)
         self.template_manager = template_manager
-        self.tool_call_parser = self.tokenizer_manager.server_args.tool_call_parser
-        self.reasoning_parser = self.tokenizer_manager.server_args.reasoning_parser
+        
+        server_args = self.tokenizer_manager.server_args
+        self.tool_call_parser = server_args.tool_call_parser
+        self.reasoning_parser = server_args.reasoning_parser
 
         # Get default sampling parameters from model's generation config
         self.default_sampling_params = (
@@ -1025,15 +1027,14 @@ class OpenAIServingChat(OpenAIServingBase):
         Returns:
             The boolean value of 'enable_thinking' if found, otherwise False.
         """
-        if hasattr(request, "chat_template_kwargs") and request.chat_template_kwargs:
-            # For Qwen3 models, `enable_thinking` is supported.
-            if self.reasoning_parser in ["qwen3", "glm45"]:
-                return request.chat_template_kwargs.get("enable_thinking", False)
-            # For DeepSeek-V3.1 models, `thinking` is supported.
-            elif self.reasoning_parser in ["deepseek-v3"]:
-                return request.chat_template_kwargs.get("thinking", False)
-            else:
-                return False
+        chat_template_kwargs = getattr(request, "chat_template_kwargs", None)
+        if chat_template_kwargs:
+            # Optimize reasoning_parser lookup via local variable
+            reasoning_parser = self.reasoning_parser
+            if reasoning_parser in {"qwen3", "glm45"}:
+                return chat_template_kwargs.get("enable_thinking", False)
+            elif reasoning_parser == "deepseek-v3":
+                return chat_template_kwargs.get("thinking", False)
         return False
 
     async def _process_tool_call_stream(
