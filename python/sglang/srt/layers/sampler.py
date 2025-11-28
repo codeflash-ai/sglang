@@ -283,16 +283,28 @@ def top_k_top_p_min_p_sampling_from_probs_torch(
     with the sampling_seed of each request.
     """
     probs_sort, probs_idx = probs.sort(dim=-1, descending=True)
+    batch_size, vocab_size = probs_sort.shape
+
+    # Compute cumsum only once; move to in-place ops where possible for memory savings
     probs_sum = torch.cumsum(probs_sort, dim=-1)
-    probs_sort[
-        torch.arange(0, probs.shape[-1], device=probs.device).view(1, -1)
-        >= top_ks.view(-1, 1)
-    ] = 0.0
-    probs_sort[(probs_sum - probs_sort) > top_ps.view(-1, 1)] = 0.0
+
+    # Top-k mask: vectorized, uses broadcasting for efficiency
+    # Find the mask in a single call, then mask out
+    # top_ks is shape (batch,), need (batch, vocab)
+    mask_topk = torch.arange(vocab_size, device=probs.device).unsqueeze(0) >= top_ks.unsqueeze(1)
+    probs_sort.masked_fill_(mask_topk, 0.0)
+
+    # Top-p (nucleus) mask: zero out tokens beyond top_p cumulative mass
+    mask_topp = (probs_sum - probs_sort) > top_ps.unsqueeze(1)
+    probs_sort.masked_fill_(mask_topp, 0.0)
+
 
     if need_min_p_sampling:
         min_p_thresholds = probs_sort[:, 0] * min_ps
-        probs_sort[probs_sort < min_p_thresholds.view(-1, 1)] = 0.0
+        mask_minp = probs_sort < min_p_thresholds.unsqueeze(1)
+        probs_sort.masked_fill_(mask_minp, 0.0)
+
+    # Sampling
     if sampling_seed is not None:
         sampled_index = multinomial_with_seed(probs_sort, sampling_seed, positions)
     else:
@@ -374,15 +386,19 @@ def multinomial_with_seed(
         from the distribution in `inputs[i]` using `seed[i]`.
     """
     n, m = inputs.shape
-    col_indices = torch.arange(m, device=inputs.device).unsqueeze(0)
+    device = inputs.device
+
+    col_indices = torch.arange(m, device=device).unsqueeze(0)
     step_seed = (seed * 19349663) ^ (positions * 73856093)
     seed_expanded = step_seed.unsqueeze(-1)
     hashed = (seed_expanded * 8589934591) ^ (col_indices * 479001599)
-    uniform_samples = (hashed % (2**24)).float() / (2**24)
-    epsilon = 1e-10
-    uniform_samples = uniform_samples.clamp(epsilon, 1.0 - epsilon)
+
+    # Create uniform samples and clamp for numerical stability using a single operation
+    uniform_samples = torch.fmod(hashed, 2**24).float().mul_(2**-24).clamp_(1e-10, 1.0 - 1e-10)
+
+    # Add Gumbel noise for efficient sampling
     gumbel_noise = -torch.log(-torch.log(uniform_samples))
-    log_probs = torch.log(inputs + epsilon)
+    log_probs = torch.log(inputs.add(1e-10))
     perturbed_log_probs = log_probs + gumbel_noise
     return torch.argmax(perturbed_log_probs, dim=1, keepdim=True)
 
