@@ -182,11 +182,12 @@ class PermuteMethodPool:
         :return: The registered permute function or None if not found.
         """
         key = (dispatch_output_format, runner_input_format)
-        pre_permute_func = cls._pre_permute_methods.get(key)
-        assert (
-            pre_permute_func is not None
-        ), f"Pre-permute function for {dispatch_output_format} to {runner_input_format} is not registered"
-        return pre_permute_func
+        try:
+            return cls._pre_permute_methods[key]
+        except KeyError:
+            raise AssertionError(
+                f"Pre-permute function for {dispatch_output_format} to {runner_input_format} is not registered"
+            )
 
     @classmethod
     def get_post_permute(
