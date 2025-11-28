@@ -528,12 +528,14 @@ def _yarn_find_correction_range(
     base: float = 10000,
     max_position_embeddings: int = 2048,
 ) -> Tuple[int, int]:
-    low = math.floor(
-        _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
-    )
-    high = math.ceil(
-        _yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
+    # Avoid repeated calculation of log(base) and move constant division outside calls where possible
+    log_base = math.log(base) if base != 10000 else 9.210340371976184
+    # If both calls use same base/max_position_embeddings, can reuse these values
+    low_factor = max_position_embeddings / (low_rot * 2 * math.pi)
+    high_factor = max_position_embeddings / (high_rot * 2 * math.pi)
+    # Compute low/high dims directly here without function call overhead
+    low = math.floor((dim * math.log(low_factor)) / (2 * log_base))
+    high = math.ceil((dim * math.log(high_factor)) / (2 * log_base))
     return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
