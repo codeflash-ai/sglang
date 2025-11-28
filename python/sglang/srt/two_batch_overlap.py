@@ -436,20 +436,23 @@ class TboDPAttentionPreparer:
 
     @staticmethod
     def _compute_global_forward_mode(forward_modes):
-        forward_modes_excluding_idle = [
-            x for x in forward_modes if x != ForwardMode.IDLE.value
-        ]
+        # Use generator and any() for early exit to avoid creating list unless necessary
+        idle = ForwardMode.IDLE.value
+        first_non_idle = None
+        all_same = True
+        for x in forward_modes:
+            if x != idle:
+                if first_non_idle is None:
+                    first_non_idle = x
+                elif x != first_non_idle:
+                    all_same = False
+                    break
 
-        if not forward_modes_excluding_idle:
+        if first_non_idle is None:
             return ForwardMode.IDLE, False
 
-        forward_mode_agree = TboDPAttentionPreparer._is_all_same(
-            forward_modes_excluding_idle
-        )
-        global_forward_mode = (
-            ForwardMode(forward_modes_excluding_idle[0]) if forward_mode_agree else None
-        )
-        return global_forward_mode, forward_mode_agree
+        global_forward_mode = ForwardMode(first_non_idle) if all_same else None
+        return global_forward_mode, all_same
 
     @staticmethod
     def _is_all_same(x):
