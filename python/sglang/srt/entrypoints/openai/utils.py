@@ -18,31 +18,49 @@ def to_openai_style_logprobs(
 ):
     ret_logprobs = LogProbs()
 
-    def append_token_logprobs(token_logprobs):
-        for logprob, _, token_text in token_logprobs:
-            ret_logprobs.tokens.append(token_text)
-            ret_logprobs.token_logprobs.append(logprob)
+    # Combine logprob sources if present, to minimize function call overhead and reduce attribute access
+    token_logprobs_sources = []
+    if input_token_logprobs is not None:
+        token_logprobs_sources.append(input_token_logprobs)
+    if output_token_logprobs is not None:
+        token_logprobs_sources.append(output_token_logprobs)
 
+    # Use batch appends for efficiency
+    tokens = ret_logprobs.tokens
+    token_logprobs = ret_logprobs.token_logprobs
+    text_offset = ret_logprobs.text_offset
+
+    for logprobs in token_logprobs_sources:
+        # Use local variables to avoid attribute lookups in loop
+        append = tokens.append
+        append_logprob = token_logprobs.append
+        append_offset = text_offset.append
+        for logprob, _, token_text in logprobs:
+            append(token_text)
+            append_logprob(logprob)
             # Not supported yet
-            ret_logprobs.text_offset.append(-1)
+            append_offset(-1)
 
-    def append_top_logprobs(top_logprobs):
+    # Similarly process top logprobs in two stages
+    top_logprobs_sources = []
+    if input_top_logprobs is not None:
+        top_logprobs_sources.append(input_top_logprobs)
+    if output_top_logprobs is not None:
+        top_logprobs_sources.append(output_top_logprobs)
+
+    top_logprobs_attr = ret_logprobs.top_logprobs
+    for top_logprobs in top_logprobs_sources:
+        # Fast-path append
+        append_top = top_logprobs_attr.append
         for tokens in top_logprobs:
             if tokens is not None:
-                ret_logprobs.top_logprobs.append(
-                    {token[2]: token[0] for token in tokens}
-                )
+                # Compose dict directly without comprehension for slightly better perf
+                d = {}
+                for token in tokens:
+                    d[token[2]] = token[0]
+                append_top(d)
             else:
-                ret_logprobs.top_logprobs.append(None)
-
-    if input_token_logprobs is not None:
-        append_token_logprobs(input_token_logprobs)
-    if output_token_logprobs is not None:
-        append_token_logprobs(output_token_logprobs)
-    if input_top_logprobs is not None:
-        append_top_logprobs(input_top_logprobs)
-    if output_top_logprobs is not None:
-        append_top_logprobs(output_top_logprobs)
+                append_top(None)
 
     return ret_logprobs
 
