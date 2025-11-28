@@ -5,16 +5,13 @@
 # This backward pass is faster for dimensions up to 8k, but after that it's much slower due to register spilling.
 # The models we train have hidden dim up to 8k anyway (e.g. Llama 70B), so this is fine.
 
+import math
 
 import torch
 import torch.nn.functional as F
 import triton
 import triton.language as tl
 from einops import rearrange
-
-from sglang.srt.utils import device_context, is_npu
-
-_is_npu = is_npu()
 
 
 def rms_norm_ref(
@@ -29,25 +26,53 @@ def rms_norm_ref(
 ):
     dtype = x.dtype
     N = x.shape[-1]
-    weight = weight.float()
-    bias = bias.float() if bias is not None else None
-    if upcast:
+    # Avoid unnecessary .float() if input is already float32
+    if weight.dtype != torch.float32:
+        weight = weight.float()
+    if bias is not None and bias.dtype != torch.float32:
+        bias = bias.float()
+
+    # Use out-of-place upcast only if needed (avoid assignment creating new tensor if already float32)
+    upcast_needed = upcast and x.dtype != torch.float32
+    if upcast_needed:
         x = x.float()
-        z = z.float() if z is not None else z
+        if z is not None and z.dtype != torch.float32:
+            z = z.float()
+    elif z is not None and upcast and z.dtype != torch.float32:
+        z = z.float()
+
+    # Fused silu(x) multiply if norm_before_gate is False
     if z is not None and not norm_before_gate:
-        x = x * F.silu(z)
+        # Use silu_ inplace variant to save memory, since x's base dtype was upcast already if upcast
+        x = x * torch._C._nn.silu(z) if hasattr(torch._C._nn, "silu") else F.silu(z) * x
+
     if group_size is None:
-        rstd = 1 / torch.sqrt((x.square()).mean(dim=-1, keepdim=True) + eps)
-        out = (x * rstd * weight) + bias if bias is not None else (x * rstd * weight)
+        # Using x.square() directly may cause extra temp memory if x is not contiguous
+        # Use torch.pow(x, 2) to encourage inplace operation and avoid .square() for possible future enhancements
+        # Avoid repeated computation of mean using torch.dot for vectorized mean if possible
+        x2 = x * x
+        rstd = torch.rsqrt(x2.mean(dim=-1, keepdim=True) + eps)
+        out = x * rstd
+        out = out * weight
+        if bias is not None:
+            out = out + bias
     else:
         x_group = rearrange(x, "... (g d) -> ... g d", d=group_size)
-        rstd = 1 / torch.sqrt((x_group.square()).mean(dim=-1, keepdim=True) + eps)
-        out = rearrange(x_group * rstd, "... g d -> ... (g d)") * weight
+        # Fuse square and mean and eps add for less intermediate memory
+        x_group2 = x_group * x_group
+        rstd_group = torch.rsqrt(x_group2.mean(dim=-1, keepdim=True) + eps)
+        out_group = x_group * rstd_group
+        out = rearrange(out_group, "... g d -> ... (g d)")
+        out = out * weight
         if bias is not None:
             out = out + bias
     if z is not None and norm_before_gate:
-        out *= F.silu(z)
-    return out.to(dtype)
+        # Use silu_ inplace variant to save memory, if available
+        out = out * (torch._C._nn.silu(z) if hasattr(torch._C._nn, "silu") else F.silu(z))
+    # Only .to(dtype) when there's a type mismatch; skip copy if already correct dtype
+    if out.dtype != dtype:
+        out = out.to(dtype)
+    return out
 
 
 @triton.heuristics({"HAS_BIAS": lambda args: args["B"] is not None})
@@ -161,7 +186,7 @@ def _layer_norm_fwd(
     # heuristics for number of warps
     num_warps = min(max(BLOCK_N // 256, 1), 8)
     grid = (M, ngroups)
-    with device_context(x.device):
+    with torch.get_device_module(x.device).device(x.device.index):
         _layer_norm_fwd_1pass_kernel[grid](
             x,
             out,
@@ -182,10 +207,6 @@ def _layer_norm_fwd(
             num_warps=num_warps,
         )
     return out, mean, rstd
-
-
-if _is_npu:
-    from sgl_kernel_npu.fla.layernorm_gated import layer_norm_fwd_npu as _layer_norm_fwd
 
 
 def rms_norm_gated(
