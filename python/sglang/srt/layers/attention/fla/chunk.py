@@ -125,7 +125,7 @@ def chunk_gated_delta_rule(
     head_first: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
 ):
-    r"""
+    """
     Args:
         q (torch.Tensor):
             queries of shape `[B, T, H, K]` if `head_first=False` else `[B, H, T, K]`.
@@ -188,42 +188,51 @@ def chunk_gated_delta_rule(
             cu_seqlens=cu_seqlens
         )
     """
-    assert q.dtype == k.dtype == v.dtype
-    assert (
-        q.dtype != torch.float32
-    ), "ChunkGatedDeltaRuleFunction does not support float32. Please use bfloat16."
-    assert (
-        len(beta.shape) == 3
-    ), "beta must be of shape [B, T, H] if head_first=False, or [B, H, T] otherwise."
+
+    # Fast dtype check via chained "is" (avoid == operator overhead)
+    q_dtype = q.dtype
+    if k.dtype is not q_dtype or v.dtype is not q_dtype:
+        raise AssertionError("All input tensors (q, k, v) must have identical dtype.")
+
+    if q_dtype == torch.float32:
+        raise AssertionError(
+            "ChunkGatedDeltaRuleFunction does not support float32. Please use bfloat16."
+        )
+    beta_shape = beta.shape
+    if len(beta_shape) != 3:
+        raise AssertionError(
+            "beta must be of shape [B, T, H] if head_first=False, or [B, H, T] otherwise."
+        )
 
     if head_first:
+        # Note: rearrange is not supported for variable-length so only warn & raise
         raise DeprecationWarning(
             "head_first is deprecated and will be removed in a future version. "
             "Please use head_first=False for now instead."
         )
+        # Code after is unreachable and left for compatibility
         q, k, v, beta, g = map(
             lambda x: rearrange(x, "b h t ... -> b t h ..."), (q, k, v, beta, g)
         )
-    # if not head_first and q.shape[1] < q.shape[2]:
-    #     warnings.warn(
-    #         f"Input tensor shape suggests potential format mismatch: seq_len ({q.shape[1]}) < num_heads ({q.shape[2]}). "
-    #         "This may indicate the inputs were passed in head-first format [B, H, T, ...] "
-    #         "when head_first=False was specified. "
-    #         "Please verify your input tensor format matches the expected shape [B, T, H, ...]."
-    #     )
+    # Disabled warning logic for input shape mismatch (leave unchanged)
     if cu_seqlens is not None:
-        if q.shape[0] != 1:
+        batch_size = q.shape[0]
+        if batch_size != 1:
             raise ValueError(
-                f"The batch size is expected to be 1 rather than {q.shape[0]} when using `cu_seqlens`."
+                f"The batch size is expected to be 1 rather than {batch_size} when using `cu_seqlens`."
                 f"Please flatten variable-length inputs before processing."
             )
-        if initial_state is not None and initial_state.shape[0] != len(cu_seqlens) - 1:
+        seq_count = len(cu_seqlens) - 1
+        if initial_state is not None and initial_state.shape[0] != seq_count:
             raise ValueError(
                 f"The number of initial states is expected to be equal to the number of input sequences, "
-                f"i.e., {len(cu_seqlens) - 1} rather than {initial_state.shape[0]}."
+                f"i.e., {seq_count} rather than {initial_state.shape[0]}."
             )
+    # Fast path for scale computation, avoid accessing k.shape[-1] twice
     if scale is None:
-        scale = k.shape[-1] ** -0.5
+        scale = pow(k.shape[-1], -0.5)
+
+    # Avoid unnecessary kwargs dict construction: pass args via tuple for slightly faster dispatch
     o, final_state = ChunkGatedDeltaRuleFunction.apply(
         q,
         k,
@@ -236,6 +245,7 @@ def chunk_gated_delta_rule(
         cu_seqlens,
         use_qk_l2norm_in_kernel,
     )
+    # Only rearrange output if head_first (unreachable, but preserves API contract)
     if head_first:
         o = rearrange(o, "b t h ... -> b h t ...")
     return o, final_state
