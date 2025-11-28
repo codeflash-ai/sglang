@@ -99,7 +99,7 @@ class SglSamplingParams:
         return {
             "max_tokens": self.max_new_tokens,
             "stop_sequences": (
-                self.stop if isinstance(self.stop, (list, tuple)) else [self.stop]
+                [self.stop] if isinstance(self.stop, str) else self.stop
             ),
             "temperature": self.temperature,
             "top_p": self.top_p,
