@@ -109,28 +109,33 @@ def _compute_moe_deepseek_blog_prefill(layer):
 
 
 def _compute_moe_deepseek_blog_decode(layer):
+    # Locally bind frequently used attributes/objects to local variables for faster access
+    y_op = operations.YieldOperation
+    self_attn = layer.self_attn
+    mlp = layer.mlp
+
     return OperationsStrategy(
         deep_gemm_num_sms=None,
         tbo_delta_stages=2,
         operations=[
             layer.op_comm_prepare_attn,
-            layer.self_attn.op_prepare,
-            operations.YieldOperation(),
-            layer.self_attn.op_core,
+            self_attn.op_prepare,
+            y_op(),
+            self_attn.op_core,
             layer.op_comm_prepare_mlp,
-            layer.mlp.op_gate,
-            layer.mlp.op_select_experts,
-            operations.YieldOperation(),
-            layer.mlp.op_dispatch_a,
-            layer.mlp.op_shared_experts,
-            operations.YieldOperation(),
-            layer.mlp.op_dispatch_b,
-            layer.mlp.op_experts,
-            layer.mlp.op_combine_a,
-            operations.YieldOperation(),
-            layer.mlp.op_combine_b,
-            operations.YieldOperation(),
-            layer.mlp.op_output,
+            mlp.op_gate,
+            mlp.op_select_experts,
+            y_op(),
+            mlp.op_dispatch_a,
+            mlp.op_shared_experts,
+            y_op(),
+            mlp.op_dispatch_b,
+            mlp.op_experts,
+            mlp.op_combine_a,
+            y_op(),
+            mlp.op_combine_b,
+            y_op(),
+            mlp.op_output,
             layer.op_comm_postprocess_layer,
         ],
     )
