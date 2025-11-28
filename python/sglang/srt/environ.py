@@ -21,7 +21,7 @@ class EnvField:
         raise NotImplementedError()
 
     def get(self) -> Any:
-        value = os.getenv(self.name)
+        value = os.environ.get(self.name)
         if self._set_to_none:
             assert value is None
             return None
