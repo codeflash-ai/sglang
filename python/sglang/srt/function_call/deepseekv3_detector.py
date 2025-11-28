@@ -11,7 +11,18 @@ from sglang.srt.function_call.core_types import (
     ToolCallItem,
     _GetInfoFunc,
 )
+from sglang.srt.function_call.ebnf_composer import EBNFComposer
 from sglang.srt.function_call.utils import _is_complete_json
+
+_FUNC_PARTIAL_RE = re.compile(
+    r"<｜tool▁call▁begin｜>(.*)<｜tool▁sep｜>(.*)\n```json\n(.*)\n```.*",
+    re.DOTALL
+)
+
+_TOOL_CALL_END_RE = re.compile(
+    r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>",
+    re.DOTALL
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +122,7 @@ class DeepSeekV3Detector(BaseFormatDetector):
 
         calls: list[ToolCallItem] = []
         try:
-            partial_match = re.search(
-                pattern=r"<｜tool▁call▁begin｜>(.*)<｜tool▁sep｜>(.*)\n```json\n(.*)\n```.*",
-                string=current_text,
-                flags=re.DOTALL,
-            )
+            partial_match = _FUNC_PARTIAL_RE.search(current_text)
             if partial_match:
                 func_name = partial_match.group(2).strip()
                 func_args_raw = partial_match.group(3).strip()
@@ -180,9 +187,7 @@ class DeepSeekV3Detector(BaseFormatDetector):
                         tool_call_end_pattern = (
                             r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>"
                         )
-                        match = re.search(
-                            tool_call_end_pattern, current_text, re.DOTALL
-                        )
+                        match = _TOOL_CALL_END_RE.search(current_text)
                         if match:
                             # Remove the completed tool call from buffer, keep any remaining content
                             self._buffer = current_text[match.end() :]
@@ -206,4 +211,14 @@ class DeepSeekV3Detector(BaseFormatDetector):
             begin=">" + name + "\n```json\n",
             end="\n```<",
             trigger=">" + name + "\n```json\n",
+        )
+
+    def build_ebnf(self, tools: List[Tool]):
+        return EBNFComposer.build_ebnf(
+            tools,
+            sequence_start_token=self.bot_token,
+            sequence_end_token=self.eot_token,
+            tool_call_separator="",
+            call_rule_fmt='"<｜tool▁call▁begin｜>function<｜tool▁sep｜>{name}\\n```json\\n"{arguments_rule}"\\n```<｜tool▁call▁end｜>"',
+            function_format="json",
         )

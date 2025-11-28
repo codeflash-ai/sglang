@@ -1,3 +1,4 @@
+import json
 from json import JSONDecodeError, JSONDecoder
 from json.decoder import WHITESPACE
 from typing import Any, List, Literal, Optional, Tuple, Union
@@ -53,7 +54,7 @@ def _is_complete_json(input_str: str) -> bool:
     try:
         orjson.loads(input_str)
         return True
-    except JSONDecodeError:
+    except orjson.JSONDecodeError:
         return False
 
 
