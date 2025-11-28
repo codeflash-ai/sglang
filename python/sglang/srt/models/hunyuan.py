@@ -57,13 +57,16 @@ expert_distribution_recorder = ExpertDistributionRecorder()
 
 
 def _is_moe(config: PretrainedConfig) -> bool:
-    if getattr(config, "num_experts", None) and (
-        (isinstance(config.num_experts, int) and config.num_experts > 1)
-        or (isinstance(config.num_experts, list) and max(config.num_experts) > 1)
-    ):
-        return True
-    else:
+    num_experts = getattr(config, "num_experts", None)
+    if num_experts is None:
         return False
+    # Avoid repeated isinstance checks and calls to max by narrowing with a single test
+    if type(num_experts) is int:
+        return num_experts > 1
+    elif type(num_experts) is list and num_experts:
+        # If the list is empty, max() will raise ValueError, so guard above
+        return max(num_experts) > 1
+    return False
 
 
 def _get_cla_factor(config: PretrainedConfig) -> int:
