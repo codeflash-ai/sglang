@@ -88,11 +88,12 @@ class MoeWNA16Config(QuantizationConfig):
             self.use_marlin = GPTQMarlinConfig.is_gptq_marlin_compatible(full_config)
         elif self.linear_quant_method == "awq":
             capability_tuple = get_device_capability()
-            device_capability = (
-                -1
-                if capability_tuple is None
-                else capability_tuple[0] * 10 + capability_tuple[1]
-            )
+            # Fast path if CUDA is disabled (capabilities None)
+            if capability_tuple is None or capability_tuple[0] is None or capability_tuple[1] is None:
+                device_capability = -1
+            else:
+                device_capability = capability_tuple[0] * 10 + capability_tuple[1]
+
             awq_min_capability = AWQConfig.get_min_capability()
             if device_capability < awq_min_capability:
                 raise ValueError(
@@ -168,16 +169,14 @@ class MoeWNA16Config(QuantizationConfig):
         num_bits = quant_config.get("bits")
         desc_act = quant_config.get("desc_act")
 
-        capability_tuple = get_device_capability()
-        device_capability = (
-            -1
-            if all(capability is None for capability in capability_tuple)
-            else capability_tuple[0] * 10 + capability_tuple[1]
-        )
-        # Avoid circular import
-        awq_min_capability = AWQConfig.get_min_capability()
+        # Use cached device and AWQ min capability for repeated fast accesses
+        device_capability = cls._get_device_capability_cached()
+        awq_min_capability = cls._get_awq_min_capability_cached()
 
-        gptq_compatible = quant_method == "gptq" and not desc_act and num_bits in [4, 8]
+        # This avoids recomputing device capability for every call, saving expensive syscalls
+        
+        # Refs to values for easy fast checks
+        gptq_compatible = quant_method == "gptq" and not desc_act and num_bits in (4, 8)
         awq_compatible = (
             quant_method == "awq"
             and num_bits == 4
@@ -215,6 +214,25 @@ class MoeWNA16Config(QuantizationConfig):
         elif isinstance(layer, FusedMoE):
             return MoeWNA16Method(self)
         return None
+
+    @classmethod
+    def _get_device_capability_cached(cls):
+        # Helper for caching device capability, static across class uses
+        if not hasattr(cls, "_cached_device_capability"):
+            capability_tuple = get_device_capability()
+            # Fast path if CUDA is disabled (capabilities None)
+            if capability_tuple is None or capability_tuple[0] is None or capability_tuple[1] is None:
+                device_capability = -1
+            else:
+                device_capability = capability_tuple[0] * 10 + capability_tuple[1]
+            cls._cached_device_capability = device_capability
+        return cls._cached_device_capability
+
+    @classmethod
+    def _get_awq_min_capability_cached(cls):
+        if not hasattr(cls, "_cached_awq_min_capability"):
+            cls._cached_awq_min_capability = AWQConfig.get_min_capability()
+        return cls._cached_awq_min_capability
 
 
 def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
