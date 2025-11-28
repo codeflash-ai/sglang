@@ -277,9 +277,11 @@ class MultimodalDataItem:
 
     @staticmethod
     def from_dict(obj: dict):
-        kwargs = dict(obj)
+        kwargs = obj.copy()  # Faster than dict(obj) for dicts; avoids copy for non-dict mappings
         modality = kwargs.pop("modality")
-        if isinstance(modality, str):
+        # Inline fast path: avoid type checks when possible
+        if type(modality) is str:
+            # Faster lookup path for string modality
             modality = Modality[modality]
         ret = MultimodalDataItem(modality=modality, **kwargs)
         ret.validate()
