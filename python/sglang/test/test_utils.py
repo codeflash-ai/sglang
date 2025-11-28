@@ -25,6 +25,7 @@ import aiohttp
 import numpy as np
 import requests
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from PIL import Image
 
@@ -260,13 +261,18 @@ def call_generate_outlines(
 def call_generate_srt_raw(prompt, temperature, max_tokens, stop=None, url=None):
     assert url is not None
 
+
+    # Build data dict without including 'stop' key if it's None for smaller payload
+    sampling_params = {
+        "temperature": temperature,
+        "max_new_tokens": max_tokens,
+    }
+    if stop is not None:
+        sampling_params["stop"] = stop
+
     data = {
         "text": prompt,
-        "sampling_params": {
-            "temperature": temperature,
-            "max_new_tokens": max_tokens,
-            "stop": stop,
-        },
+        "sampling_params": sampling_params,
     }
     res = requests.post(url, json=data)
     assert res.status_code == 200
