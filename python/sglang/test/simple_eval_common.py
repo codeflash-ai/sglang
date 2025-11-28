@@ -257,7 +257,15 @@ HTML_JINJA = """
 
 
 def format_multichoice_question(row):
-    return QUERY_TEMPLATE_MULTICHOICE.format(**row)
+    # Avoid dictionary unpacking overhead by accessing fields directly
+    return (
+        "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.\n\n"
+        f"{row['Question']}\n\n"
+        f"A) {row['A']}\n"
+        f"B) {row['B']}\n"
+        f"C) {row['C']}\n"
+        f"D) {row['D']}"
+    )
 
 
 def check_equality(sampler: SamplerBase, expr1: str, expr2: str):
