@@ -81,9 +81,10 @@ class BaseTokenToKVPoolAllocator(abc.ABC):
             self.free(torch.cat(self.free_group))
 
     def merge_and_sort_free(self):
-        if len(self.release_pages) > 0:
+        if self.release_pages.numel() > 0:
             self.free_pages = torch.cat((self.free_pages, self.release_pages))
-            self.free_pages, _ = torch.sort(self.free_pages)
+            if self.need_sort:
+                self.free_pages, _ = torch.sort(self.free_pages)
             self.release_pages = torch.empty(
                 (0,), dtype=self.release_pages.dtype, device=self.device
             )
@@ -143,10 +144,10 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         return len(self.free_pages) + len(self.release_pages)
 
     def alloc(self, need_size: int):
-        if self.need_sort and need_size > len(self.free_pages):
+        if self.need_sort and need_size > self.free_pages.numel():
             self.merge_and_sort_free()
 
-        if need_size > len(self.free_pages):
+        if need_size > self.free_pages.numel():
             return None
 
         select_index = self.free_pages[:need_size]
