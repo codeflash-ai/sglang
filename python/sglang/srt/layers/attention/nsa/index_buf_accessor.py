@@ -29,11 +29,9 @@ class GetK:
             dtype=torch.uint8,
             device=pool.device,
         )
-        for i in range(num_pages):
-            page_index = page_indices[i]
-            index_k_fp8[i * pool.page_size : (i + 1) * pool.page_size] = buf[
-                page_index
-            ][: pool.page_size * pool.index_head_dim].view(-1, pool.index_head_dim)
+        
+        buf_flat = buf[page_indices, :pool.page_size * pool.index_head_dim]
+        index_k_fp8[:seq_len_] = buf_flat.view(-1, pool.index_head_dim)
 
         return index_k_fp8[:seq_len]
 
