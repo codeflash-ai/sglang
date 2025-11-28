@@ -52,8 +52,8 @@ global args
 
 # don't want to import sglang package here
 def _get_bool_env_var(name: str, default: str = "false") -> bool:
-    value = os.getenv(name, default)
-    return value.lower() in ("true", "1")
+    value = os.environ.get(name, default)
+    return value.lower() in {"true", "1"}
 
 
 def _create_bench_client_session():
