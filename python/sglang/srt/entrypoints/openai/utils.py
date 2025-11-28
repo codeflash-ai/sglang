@@ -19,21 +19,23 @@ def to_openai_style_logprobs(
     ret_logprobs = LogProbs()
 
     def append_token_logprobs(token_logprobs):
-        for logprob, _, token_text in token_logprobs:
-            ret_logprobs.tokens.append(token_text)
-            ret_logprobs.token_logprobs.append(logprob)
-
-            # Not supported yet
-            ret_logprobs.text_offset.append(-1)
+        if token_logprobs:
+            tokens = [tpl[2] for tpl in token_logprobs]
+            logprobs = [tpl[0] for tpl in token_logprobs]
+            # -1 is used for all offsets
+            offsets = [-1] * len(token_logprobs)
+            ret_logprobs.tokens.extend(tokens)
+            ret_logprobs.token_logprobs.extend(logprobs)
+            ret_logprobs.text_offset.extend(offsets)
 
     def append_top_logprobs(top_logprobs):
-        for tokens in top_logprobs:
-            if tokens is not None:
-                ret_logprobs.top_logprobs.append(
-                    {token[2]: token[0] for token in tokens}
-                )
-            else:
-                ret_logprobs.top_logprobs.append(None)
+        if top_logprobs:
+            # List comp for speed, batch-appending results
+            extended = [
+                {token[2]: token[0] for token in tokens} if tokens is not None else None
+                for tokens in top_logprobs
+            ]
+            ret_logprobs.top_logprobs.extend(extended)
 
     if input_token_logprobs is not None:
         append_token_logprobs(input_token_logprobs)
