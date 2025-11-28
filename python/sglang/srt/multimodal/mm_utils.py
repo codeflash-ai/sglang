@@ -71,19 +71,24 @@ def select_best_resolution(original_size, possible_resolutions):
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
+    orig_area = original_width * original_height
+
+    # Use local variables, avoid repeated computation in loop, loop fusion for both area and scale
     for width, height in possible_resolutions:
         # Calculate the downscaled size to keep the aspect ratio
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
+        scale_w = width / original_width
+        scale_h = height / original_height
+        scale = scale_w if scale_w < scale_h else scale_h  # min(width/ow, height/oh)
+
+        downscaled_width = int(original_width * scale)
+        downscaled_height = int(original_height * scale)
+        down_area = downscaled_width * downscaled_height
 
         # Calculate effective and wasted resolutions
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        effective_resolution = down_area if down_area < orig_area else orig_area
         wasted_resolution = (width * height) - effective_resolution
 
+        # Comparison and update
         if effective_resolution > max_effective_resolution or (
             effective_resolution == max_effective_resolution
             and wasted_resolution < min_wasted_resolution
