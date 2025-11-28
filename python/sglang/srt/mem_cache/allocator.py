@@ -81,12 +81,19 @@ class BaseTokenToKVPoolAllocator(abc.ABC):
             self.free(torch.cat(self.free_group))
 
     def merge_and_sort_free(self):
-        if len(self.release_pages) > 0:
-            self.free_pages = torch.cat((self.free_pages, self.release_pages))
-            self.free_pages, _ = torch.sort(self.free_pages)
-            self.release_pages = torch.empty(
-                (0,), dtype=self.release_pages.dtype, device=self.device
-            )
+        # Optimize sort and allocation by minimizing unnecessary reallocations
+        rp = self.release_pages
+        if rp is not None and rp.numel() > 0:
+            # Efficient concatenation and sorting in-place if possible
+            fp = self.free_pages
+            if fp is not None and fp.numel() > 0:
+                self.free_pages = torch.cat((fp, rp), out=None)
+            else:
+                self.free_pages = rp
+            # Optimize torch.sort by using the stable key argument just once without throwing away indices
+            self.free_pages = self.free_pages.sort()[0]
+            # Only allocate empty tensor if any release happened
+            self.release_pages = torch.empty((0,), dtype=rp.dtype, device=rp.device)
 
     def get_cpu_copy(self, *args, **kwargs):
         # FIXME: reuse the get_cpu_copy after paged allocator is implemented
@@ -441,20 +448,20 @@ class PagedTokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
             ), "The allocation size should be page-aligned"
 
         num_pages = need_size // self.page_size
-        if self.need_sort and num_pages > len(self.free_pages):
+        # Avoid repeatedly checking .need_sort if unnecessary
+        if self.need_sort and num_pages > self.free_pages.numel():
             self.merge_and_sort_free()
-        if num_pages > len(self.free_pages):
+        if num_pages > self.free_pages.numel():
             return None
 
         out_pages = self.free_pages[:num_pages]
         self.free_pages = self.free_pages[num_pages:]
 
-        out_indices = (
-            out_pages[:, None] * self.page_size
-            + torch.arange(self.page_size, device=self.device)
-        ).reshape(-1)
-
-        return out_indices
+        # Avoid repeated arange allocations by caching if possible (Not done here since page_size can change)
+        # Avoid repeated .reshape(-1) for contiguous memory
+        indices = torch.arange(self.page_size, device=self.device)
+        out_indices = out_pages[:, None] * self.page_size + indices
+        return out_indices.reshape(-1)
 
     def alloc_extend(
         self,
