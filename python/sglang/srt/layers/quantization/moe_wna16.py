@@ -31,10 +31,12 @@ if TYPE_CHECKING:
 
 
 def get_weight_perm(num_bits: int):
-    perm_list: List[int] = []
+    # Precompute block/row indices and perm1 values for all 32 i
+    # This avoids recomputation and excessive .append per loop.
+    perm1_values = np.zeros((32, 8), dtype=np.int32)
     for i in range(32):
-        perm1: List[int] = []
         col = i // 4
+        block_rows = []
         for block in [0, 1]:
             for row in [
                 2 * (i % 4),
@@ -42,11 +44,17 @@ def get_weight_perm(num_bits: int):
                 2 * (i % 4 + 4),
                 2 * (i % 4 + 4) + 1,
             ]:
-                perm1.append(16 * row + col + 8 * block)
-        for j in range(4):
-            perm_list.extend([p + 256 * j for p in perm1])
+                block_rows.append(16 * row + col + 8 * block)
+        perm1_values[i, :] = block_rows
 
-    perm = np.array(perm_list)
+    # Equivalent to: for j in range(4): for each perm1: [p + 256 * j for p in perm1]
+    perm_list = (
+        perm1_values[np.repeat(np.arange(32), 4), :]
+        + (256 * np.tile(np.arange(4), 32))[:, None]
+    ).reshape(-1)
+
+    perm = perm_list
+
 
     if num_bits == 4:
         interleave = np.array([0, 2, 4, 6, 1, 3, 5, 7])
