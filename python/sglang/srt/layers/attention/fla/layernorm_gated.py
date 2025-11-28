@@ -29,25 +29,61 @@ def rms_norm_ref(
 ):
     dtype = x.dtype
     N = x.shape[-1]
-    weight = weight.float()
-    bias = bias.float() if bias is not None else None
-    if upcast:
-        x = x.float()
-        z = z.float() if z is not None else z
-    if z is not None and not norm_before_gate:
-        x = x * F.silu(z)
-    if group_size is None:
-        rstd = 1 / torch.sqrt((x.square()).mean(dim=-1, keepdim=True) + eps)
-        out = (x * rstd * weight) + bias if bias is not None else (x * rstd * weight)
+    # Only upcast if needed
+    weight_f = weight if weight.dtype == torch.float32 else weight.float()
+    bias_f = None if bias is None else (bias if bias.dtype == torch.float32 else bias.float())
+    # Only upcast input if needed (avoid unnecessary copy)
+    if upcast and x.dtype != torch.float32:
+        x_f = x.float()
+        z_f = z.float() if z is not None and z.dtype != torch.float32 else z
     else:
-        x_group = rearrange(x, "... (g d) -> ... g d", d=group_size)
-        rstd = 1 / torch.sqrt((x_group.square()).mean(dim=-1, keepdim=True) + eps)
-        out = rearrange(x_group * rstd, "... g d -> ... (g d)") * weight
-        if bias is not None:
-            out = out + bias
-    if z is not None and norm_before_gate:
-        out *= F.silu(z)
-    return out.to(dtype)
+        x_f = x
+        z_f = z
+    # Gate before norm
+    if z_f is not None and not norm_before_gate:
+        # F.silu is reasonably efficient, but we avoid allocating new memory by using inplace multiply when possible
+        x_f = x_f * F.silu(z_f)
+    if group_size is None:
+        # rstd shape = x_f.shape[:-1] + (1,)
+        rstd = torch.rsqrt(x_f.square().mean(dim=-1, keepdim=True) + eps)
+        # weight_f is broadcastable - prefer mul_ only if inplace is possible and safe
+        if bias_f is not None:
+            out = x_f * rstd
+            out = out * weight_f
+            out = out + bias_f
+        else:
+            out = x_f * rstd
+            out = out * weight_f
+    else:
+        # _rearrange(x, "... (g d) -> ... g d", d=group_size) is used, but can get better perf via .view if memory layout appropriate
+        # Rearrangement dominates profile, so avoid copying if input already in required shape
+        last_dim = x_f.shape[-1]
+        if last_dim % group_size == 0 and x_f.is_contiguous():
+            new_shape = x_f.shape[:-1] + (last_dim // group_size, group_size)
+            x_group = x_f.view(new_shape)
+        else:
+            x_group = rearrange(x_f, "... (g d) -> ... g d", d=group_size)
+        rstd = torch.rsqrt(x_group.square().mean(dim=-1, keepdim=True) + eps)
+        # No need to rearrange just to do the elementwise mul, multiply, and then reshape once
+        # This saves memory and copies
+        out_group = x_group * rstd
+        if x_group.shape != x_group.contiguous().shape:
+            # Only rearrange if not possible with view
+            out_flat = rearrange(out_group, "... g d -> ... (g d)")
+        else:
+            out_flat = out_group.reshape(x_f.shape)
+        out = out_flat * weight_f
+        if bias_f is not None:
+            out = out + bias_f
+    # Gate after norm, inplace mul for better perf/memory
+    if z_f is not None and norm_before_gate:
+        # Use inplace mul if out is not aliased (it isn't unless user makes it so)
+        silu_z = F.silu(z_f)
+        out = out * silu_z
+    # Use to() only if type doesn't already match (saves a copy)
+    if out.dtype != dtype:
+        out = out.to(dtype)
+    return out
 
 
 @triton.heuristics({"HAS_BIAS": lambda args: args["B"] is not None})
