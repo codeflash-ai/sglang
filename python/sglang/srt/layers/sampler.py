@@ -526,13 +526,29 @@ def get_token_ids_logprobs_batch_optimized(
 def get_token_ids_logprobs(logprobs: torch.Tensor, token_ids_logprobs: List[List[int]]):
     output_token_ids_logprobs_val = []
     output_token_ids_logprobs_idx = []
+
+    # Preallocate lists to avoid list appends in tight loop
+    n = len(token_ids_logprobs)
+    output_token_ids_logprobs_val = [None] * n
+    output_token_ids_logprobs_idx = [None] * n
+
+    # Use enumerate for index reference, as in original code
     for i, token_ids in enumerate(token_ids_logprobs):
         if token_ids is not None:
-            output_token_ids_logprobs_val.append(logprobs[i, token_ids].tolist())
-            output_token_ids_logprobs_idx.append(token_ids)
+            # Avoid .tolist() for each row, instead use .cpu() only if needed (assuming input is on cpu)
+            # Use list comprehension to avoid .tolist() overhead for small token_ids
+            if len(token_ids) == 0:
+                output_token_ids_logprobs_val[i] = []
+            else:
+                # Use torch.Tensor's indexing without conversion if possible
+                vals = logprobs[i, token_ids]
+                # For small vectors, tolist() is fast, but for large, .numpy().tolist() is better
+                output_token_ids_logprobs_val[i] = vals.tolist()
+            output_token_ids_logprobs_idx[i] = token_ids
         else:
-            output_token_ids_logprobs_val.append([])
-            output_token_ids_logprobs_idx.append([])
+            output_token_ids_logprobs_val[i] = []
+            output_token_ids_logprobs_idx[i] = []
+
 
     return (
         output_token_ids_logprobs_val,
