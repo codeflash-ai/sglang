@@ -967,21 +967,46 @@ class CausalConv1D(nn.Conv1d):
         )
 
     def update_cache(self, x, cache=None):
+        # Fast path: When cache is None (the majority case), avoid repeated F.pad allocations if size is unchanged
+        # Avoid checking pad if all are 0
+        left, right = self._left_padding, self._right_padding
+        x_shape = x.shape
         if cache is None:
-            new_x = F.pad(x, pad=(self._left_padding, self._right_padding))
+            if left == 0 and right == 0:
+                # No padding needed
+                new_x = x
+            else:
+                # Use torch's efficient padding when both sides are padded
+                new_x = F.pad(x, pad=(left, right))
             next_cache = cache
         else:
-            new_x = F.pad(x, pad=(0, self._right_padding))
-            new_x = torch.cat([cache, new_x], dim=-1)
+            # We only need to pad on the right in incremental/cache mode
+            if right == 0:
+                new_x = x
+            else:
+                new_x = F.pad(x, pad=(0, right))
+            # cat along the last dimension can be expensive; if cache is empty, skip cat
+            if cache.numel() == 0:
+                cat_x = new_x
+            else:
+                cat_x = torch.cat([cache, new_x], dim=-1)
+            new_x = cat_x
+            # Efficiently compute cache dropping and slicing.
             if self.cache_drop_size > 0:
                 next_cache = new_x[:, :, : -self.cache_drop_size]
             else:
                 next_cache = new_x
-            next_cache = next_cache[:, :, -cache.size(-1) :]
+            # Always slice to the size of the original cache for next step
+            end_idx = cache.size(-1)
+            # Avoid slice if already correct size
+            if next_cache.size(-1) != end_idx:
+                next_cache = next_cache[:, :, -end_idx :]
         return new_x, next_cache
 
     def forward(self, x, cache=None):
         x, cache = self.update_cache(x, cache=cache)
+        # The bulk of runtime is spent in the convolution operation
+        # (super().forward); nothing to optimize here safely for nn.Conv1d
         x = super().forward(x)
         if cache is None:
             return x
