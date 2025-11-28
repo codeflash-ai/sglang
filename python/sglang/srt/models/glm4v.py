@@ -270,7 +270,8 @@ class Glm4vVisionEmbeddings(nn.Module):
         device = pos_embed_weight.device
 
         # Move coordinates to correct device
-        h_coords, w_coords = h_coords.to(device), w_coords.to(device)
+        h_coords = h_coords.to(device)
+        w_coords = w_coords.to(device)
 
         # Handle empty sequence case
         if total_seq == 0:
@@ -278,42 +279,46 @@ class Glm4vVisionEmbeddings(nn.Module):
                 0, hidden_size, device=device, dtype=pos_embed_weight.dtype
             )
         else:
-            # Convert inputs to tensors if needed
+            # Convert inputs to tensors if needed (avoid unnecessary conversion if already Tensor)
             if isinstance(lengths, list):
-                lengths = torch.tensor(lengths, device=device, dtype=torch.long)
+                lengths = torch.as_tensor(lengths, device=device, dtype=torch.long)
+            elif lengths.device != device:
+                lengths = lengths.to(device)
+
             if not isinstance(image_shapes, torch.Tensor):
-                image_shapes = torch.tensor(
+                image_shapes = torch.as_tensor(
                     image_shapes, device=device, dtype=torch.long
                 )
+            elif image_shapes.device != device:
+                image_shapes = image_shapes.to(device)
 
             # Prepare 2D position embedding
             orig_size_sq = pos_embed_weight.shape[0]
             orig_size = int(orig_size_sq**0.5)
-            pos_embed_2d = (
-                pos_embed_weight.view(orig_size, orig_size, hidden_size)
-                .permute(2, 0, 1)
-                .unsqueeze(0)
-                .to(device=device, dtype=torch.float32)
-            )
+            pos_embed_2d = pos_embed_weight.view(orig_size, orig_size, hidden_size)
+            pos_embed_2d = pos_embed_2d.permute(2, 0, 1).unsqueeze(0).contiguous()
+            # Move and cast once
+            pos_embed_2d = pos_embed_2d.to(device=device, dtype=torch.float32)
 
-            # Calculate target dimensions for each patch
-            target_h = torch.cat(
-                [image_shapes[i, 1].repeat(lengths[i]) for i in range(len(lengths))]
-            ).to(device=device, dtype=torch.float32)
-            target_w = torch.cat(
-                [image_shapes[i, 2].repeat(lengths[i]) for i in range(len(lengths))]
-            ).to(device=device, dtype=torch.float32)
+            # Calculate target dimensions for each patch efficiently
+            # Precompute repeat lengths and flatten directly
+            lengths_cpu = lengths.cpu().numpy() if lengths.device != 'cpu' else lengths.numpy()
+            indices = torch.arange(len(lengths), device=device)
+            idx_repeat = torch.repeat_interleave(indices, lengths)
+            img_shapes = image_shapes[idx_repeat]
+            target_h = img_shapes[:, 1].to(torch.float32)
+            target_w = img_shapes[:, 2].to(torch.float32)
 
             # Normalize coordinates to [-1, 1] range for grid_sample
-            h_coords = h_coords.to(device=device, dtype=torch.float32)
-            w_coords = w_coords.to(device=device, dtype=torch.float32)
+            h_coords = h_coords.to(torch.float32)
+            w_coords = w_coords.to(torch.float32)
             norm_w = ((w_coords + 0.5) / target_w) * 2 - 1
             norm_h = ((h_coords + 0.5) / target_h) * 2 - 1
 
             # Create sampling grid
-            grid = torch.stack((norm_w, norm_h), dim=-1).unsqueeze(0).unsqueeze(2)
+            grid = torch.stack((norm_w, norm_h), dim=-1).unsqueeze(0).unsqueeze(2)  # [1, seq, 1, 2]
 
-            # Perform bicubic interpolation
+            # Bicubic interpolation using grid_sample (already channel-first)
             interpolated_embed_fp32 = F.grid_sample(
                 pos_embed_2d,
                 grid,
@@ -324,7 +329,7 @@ class Glm4vVisionEmbeddings(nn.Module):
 
             # Reshape and convert back to original dtype
             adapted_pos_embed_fp32 = (
-                interpolated_embed_fp32.squeeze(0).squeeze(-1).permute(1, 0)
+                interpolated_embed_fp32.squeeze(0).squeeze(-1).permute(1, 0).contiguous()
             )
             adapted_pos_embed = adapted_pos_embed_fp32.to(pos_embed_weight.dtype).to(
                 embeddings.device
