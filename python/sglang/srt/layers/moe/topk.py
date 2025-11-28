@@ -433,24 +433,20 @@ def fused_topk_torch_native(
 ):
     if correction_bias is not None:
         n_routed_experts = gating_output.shape[-1]
-        scores = gating_output.softmax(dim=-1)
-        scores_for_choice = scores.view(
-            -1, n_routed_experts
-        ) + correction_bias.unsqueeze(0)
-        topk_ids = torch.topk(scores_for_choice, k=topk, dim=-1, sorted=False)[1]
+        scores = gating_output.float().softmax(dim=-1)
+        # Use broadcasting directly without .unsqueeze
+        scores_for_choice = scores + correction_bias
+        # torch.topk already returns indices and values in one call
+        topk_values, topk_ids = torch.topk(scores_for_choice, k=topk, dim=-1, sorted=False)
+        # Gather topk weights from the original scores, as in the original code
         topk_weights = scores.gather(1, topk_ids)
     else:
         assert (
             hidden_states.shape[0] == gating_output.shape[0]
         ), f"Number of tokens mismatch, {hidden_states.shape=} vs {gating_output.shape=}"
-        M, _ = hidden_states.shape
-        topk_weights = torch.empty(
-            M, topk, dtype=torch.float32, device=hidden_states.device
-        )
-        topk_ids = torch.empty(M, topk, dtype=torch.int32, device=hidden_states.device)
+        # Use float in softmax for stability, and no need for torch.empty or preallocation
         topk_weights = F.softmax(gating_output.float(), dim=-1)
         topk_weights, topk_ids = torch.topk(topk_weights, topk, dim=-1)
-
     if renormalize:
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
     return topk_weights, topk_ids
