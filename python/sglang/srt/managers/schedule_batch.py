@@ -1171,7 +1171,29 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         chunked_req: Optional[Req] = None,
         dllm_config: Optional[DllmConfig] = None,
     ):
-        return_logprob = any(req.return_logprob for req in reqs)
+        # Optimize multiple traversals of reqs into a single pass
+        num_reqs = len(reqs)
+        has_stream = False
+        has_grammar = False
+        any_return_logprob = False
+        any_return_hidden_states = False
+        all_prefill_only = True
+
+        # Use local variable for faster attribute access
+        for req in reqs:
+            if not has_stream and req.stream:
+                has_stream = True
+            if not any_return_logprob and req.return_logprob:
+                any_return_logprob = True
+            if not has_grammar and req.grammar:
+                has_grammar = True
+            if not any_return_hidden_states and req.return_hidden_states:
+                any_return_hidden_states = True
+            if all_prefill_only and not req.is_prefill_only:
+                all_prefill_only = False
+            # Early exit if all flags are satisfied
+            if (has_stream and has_grammar and any_return_logprob and any_return_hidden_states and not all_prefill_only):
+                break
 
         is_hybrid = False
         if isinstance(token_to_kv_pool_allocator, SWATokenToKVPoolAllocator):
@@ -1190,13 +1212,13 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             is_hybrid=is_hybrid,
             model_config=model_config,
             enable_overlap=enable_overlap,
-            return_logprob=return_logprob,
-            has_stream=any(req.stream for req in reqs),
-            has_grammar=any(req.grammar for req in reqs),
+            return_logprob=any_return_logprob,
+            has_stream=has_stream,
+            has_grammar=has_grammar,
             device=req_to_token_pool.device,
             spec_algorithm=spec_algorithm,
-            return_hidden_states=any(req.return_hidden_states for req in reqs),
-            is_prefill_only=all(req.is_prefill_only for req in reqs),
+            return_hidden_states=any_return_hidden_states,
+            is_prefill_only=all_prefill_only,
             chunked_req=chunked_req,
             dllm_config=dllm_config,
         )
