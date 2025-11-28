@@ -53,7 +53,7 @@ def _is_complete_json(input_str: str) -> bool:
     try:
         orjson.loads(input_str)
         return True
-    except JSONDecodeError:
+    except orjson.JSONDecodeError:
         return False
 
 

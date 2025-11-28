@@ -51,6 +51,15 @@ class DeepSeekV3Detector(BaseFormatDetector):
         self._last_arguments = ""
         self.current_tool_id = -1
 
+        # Compile frequently used regex patterns at init for speed
+        self._partial_match_compiled = re.compile(
+            r"<｜tool▁call▁begin｜>(.*)<｜tool▁sep｜>(.*)\n```json\n(.*)\n```.*",
+            re.DOTALL
+        )
+        self._tool_call_end_pattern_compiled = re.compile(
+            r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>", re.DOTALL
+        )
+
     def has_tool_call(self, text: str) -> bool:
         """Check if the text contains a deepseek format tool call."""
         return self.bot_token in text
@@ -106,16 +115,16 @@ class DeepSeekV3Detector(BaseFormatDetector):
                     new_text = new_text.replace(e_token, "")
             return StreamingParseResult(normal_text=new_text)
 
-        if not hasattr(self, "_tool_indices"):
-            self._tool_indices = self._get_tool_indices(tools)
+        try:
+            _tool_indices = self._tool_indices
+        except AttributeError:
+            _tool_indices = self._get_tool_indices(tools)
+            self._tool_indices = _tool_indices
 
         calls: list[ToolCallItem] = []
         try:
-            partial_match = re.search(
-                pattern=r"<｜tool▁call▁begin｜>(.*)<｜tool▁sep｜>(.*)\n```json\n(.*)\n```.*",
-                string=current_text,
-                flags=re.DOTALL,
-            )
+            # Use compiled regex for performance
+            partial_match = self._partial_match_compiled.search(current_text)
             if partial_match:
                 func_name = partial_match.group(2).strip()
                 func_args_raw = partial_match.group(3).strip()
@@ -127,10 +136,11 @@ class DeepSeekV3Detector(BaseFormatDetector):
                     self.streamed_args_for_tool = [""]
 
                 # Ensure we have enough entries in our tracking arrays
-                while len(self.prev_tool_call_arr) <= self.current_tool_id:
-                    self.prev_tool_call_arr.append({})
-                while len(self.streamed_args_for_tool) <= self.current_tool_id:
-                    self.streamed_args_for_tool.append("")
+                needed_length = self.current_tool_id + 1
+                if len(self.prev_tool_call_arr) < needed_length:
+                    self.prev_tool_call_arr.extend({} for _ in range(needed_length - len(self.prev_tool_call_arr)))
+                if len(self.streamed_args_for_tool) < needed_length:
+                    self.streamed_args_for_tool.extend("" for _ in range(needed_length - len(self.streamed_args_for_tool)))
 
                 if not self.current_tool_name_sent:
                     calls.append(
@@ -141,14 +151,13 @@ class DeepSeekV3Detector(BaseFormatDetector):
                         )
                     )
                     self.current_tool_name_sent = True
-                    # Store the tool call info for serving layer completions endpoint
                     self.prev_tool_call_arr[self.current_tool_id] = {
                         "name": func_name,
                         "arguments": {},
                     }
                 else:
                     argument_diff = (
-                        func_args_raw[len(self._last_arguments) :]
+                        func_args_raw[len(self._last_arguments):]
                         if func_args_raw.startswith(self._last_arguments)
                         else func_args_raw
                     )
@@ -176,16 +185,10 @@ class DeepSeekV3Detector(BaseFormatDetector):
                         except json.JSONDecodeError:
                             pass
 
-                        # Find the end of the current tool call and remove only that part from buffer
-                        tool_call_end_pattern = (
-                            r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>"
-                        )
-                        match = re.search(
-                            tool_call_end_pattern, current_text, re.DOTALL
-                        )
+                        # Fast regex removal of the completed tool call from buffer, if present
+                        match = self._tool_call_end_pattern_compiled.search(current_text)
                         if match:
-                            # Remove the completed tool call from buffer, keep any remaining content
-                            self._buffer = current_text[match.end() :]
+                            self._buffer = current_text[match.end():]
                         else:
                             self._buffer = ""
 
