@@ -243,7 +243,12 @@ def compute_dp_attention_local_info(
 
     local_tp_size = moe_dense_tp_size if moe_dense_tp_size else tp_size
     local_tp_rank = tp_rank % local_tp_size
-    local_dp_size = max(1, dp_size // (tp_size // local_tp_size))
+    
+    # Precompute divisor to avoid recalculation
+    tp_size_div_local_tp_size = tp_size // local_tp_size
+    local_dp_size = dp_size // tp_size_div_local_tp_size
+    if local_dp_size < 1:
+        local_dp_size = 1
 
     local_attn_tp_size = local_tp_size // local_dp_size
     local_attn_dp_rank = local_tp_rank // local_attn_tp_size
