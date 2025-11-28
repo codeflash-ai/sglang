@@ -63,11 +63,12 @@ ScalarType, scalar_types = get_scalar_types()
 
 
 def check_marlin_format(hf_quant_cfg: Dict[str, Any]) -> bool:
-    # compat: gptqmodel and autogptq (eol) main use checkpoint_format: str
-    # compat: autogptq <=0.7.1 is_marlin_format: bool
-    return hf_quant_cfg.get("checkpoint_format") == "marlin" or hf_quant_cfg.get(
-        "is_marlin_format", False
-    )
+    # Fast path: .get is O(1) and we return on first True
+    val = hf_quant_cfg.get("checkpoint_format")
+    if val == "marlin":
+        return True
+    # If "checkpoint_format" not "marlin", only attempt other lookup
+    return hf_quant_cfg.get("is_marlin_format", False)
 
 
 def gptq_marlin_moe_repack(
@@ -332,13 +333,14 @@ class GPTQMarlinConfig(QuantizationConfig):
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
         is_marlin_format = check_marlin_format(hf_quant_cfg)
 
+        # Early return for fastest route on marlin
+        if is_marlin_format:
+            return None
+
         can_convert = cls.is_gptq_marlin_compatible(hf_quant_cfg)
+        user_quant_is_marlin = user_quant is None or user_quant == "marlin" or user_quant == "gptq_marlin"
 
-        is_valid_user_quant = (
-            user_quant is None or user_quant == "marlin" or user_quant == "gptq_marlin"
-        )
-
-        if not is_marlin_format and can_convert and is_valid_user_quant:
+        if can_convert and user_quant_is_marlin:
             msg = (
                 "The model is convertible to {} during runtime."
                 " Using {} kernel.".format(cls.get_name(), cls.get_name())
@@ -346,7 +348,7 @@ class GPTQMarlinConfig(QuantizationConfig):
             logger.info(msg)
             return cls.get_name()
 
-        if not is_marlin_format and can_convert and user_quant == "gptq":
+        if can_convert and user_quant == "gptq":
             logger.info(
                 "Detected that the model can run with gptq_marlin"
                 ", however you specified quantization=gptq explicitly,"
@@ -368,10 +370,6 @@ class GPTQMarlinConfig(QuantizationConfig):
     @classmethod
     def is_gptq_marlin_compatible(cls, quant_config: Dict[str, Any]):
         quant_method = quant_config.get("quant_method", "").lower()
-        num_bits = quant_config.get("bits")
-        group_size = quant_config.get("group_size")
-        sym = quant_config.get("sym")
-        desc_act = quant_config.get("desc_act")
 
         if not _is_cuda:
             return False
@@ -379,15 +377,21 @@ class GPTQMarlinConfig(QuantizationConfig):
         if quant_method != "gptq":
             return False
 
-        # Marlin conversion is only valid if required properties are found
-        if num_bits is None or group_size is None or sym is None or desc_act is None:
+        # Lookup all required fields up-front
+        try:
+            num_bits = quant_config["bits"]
+            group_size = quant_config["group_size"]
+            sym = quant_config["sym"]
+            desc_act = quant_config["desc_act"]
+        except KeyError:
             return False
 
         if (num_bits, sym) not in cls.TYPE_MAP:
             return False
 
         return check_marlin_supported(
-            quant_type=cls.TYPE_MAP[(num_bits, sym)], group_size=group_size
+            quant_type=cls.TYPE_MAP[(num_bits, sym)],
+            group_size=group_size
         )
 
 
