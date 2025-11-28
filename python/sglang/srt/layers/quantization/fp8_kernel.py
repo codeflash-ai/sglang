@@ -1398,34 +1398,53 @@ if _is_hip:
             shape = (max(num_token_padding, input.shape[0]), shape[1])
         output = torch.empty(shape, device=input.device, dtype=fp8_dtype)
 
-        if scale is None:
-            # Dynamic scaling
-            if use_per_token_if_dynamic:
-                scale = torch.empty(
-                    (shape[0], 1), device=input.device, dtype=torch.float32
-                )
-                if _use_aiter:
-                    dynamic_per_token_scaled_quant(output, input, scale)
-                else:
-                    torch.ops._C.dynamic_per_token_scaled_fp8_quant(
-                        output, input.contiguous(), scale, None
-                    )
-            else:
-                scale = torch.zeros(1, device=input.device, dtype=torch.float32)
-                if _use_aiter:
-                    dynamic_per_tensor_quant(output, input, scale)
-                else:
-                    torch.ops._C.dynamic_scaled_fp8_quant(output, input, scale)
-        else:
-            # Static scaling
-            assert (
-                scale.numel() == 1
-            ), f"Expected scalar scale, got numel={scale.numel()}"
-            if _use_aiter:
-                static_per_tensor_quant(output, input, scale)
-            else:
-                torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+        if _is_hip:
 
+            if scale is None:
+                # Dynamic scaling
+                if use_per_token_if_dynamic:
+                    scale = torch.empty(
+                        (shape[0], 1), device=input.device, dtype=torch.float32
+                    )
+                    if _use_aiter:
+                        dynamic_per_token_scaled_quant(output, input, scale)
+                    else:
+                        torch.ops._C.dynamic_per_token_scaled_fp8_quant(
+                            output, input.contiguous(), scale, None
+                        )
+                else:
+                    scale = torch.zeros(1, device=input.device, dtype=torch.float32)
+                    if _use_aiter:
+                        dynamic_per_tensor_quant(output, input, scale)
+                    else:
+                        torch.ops._C.dynamic_scaled_fp8_quant(output, input, scale)
+            else:
+                # Static scaling
+                assert (
+                    scale.numel() == 1
+                ), f"Expected scalar scale, got numel={scale.numel()}"
+                if _use_aiter:
+                    static_per_tensor_quant(output, input, scale)
+                else:
+                    torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+        else:
+
+            if scale is None:
+                # Dynamic scaling
+                if use_per_token_if_dynamic:
+                    scale = torch.empty(
+                        (shape[0], 1), device=input.device, dtype=torch.float32
+                    )
+                    sgl_per_token_quant_fp8(input, output, scale)
+                else:
+                    scale = torch.zeros(1, device=input.device, dtype=torch.float32)
+                    sgl_per_tensor_quant_fp8(input, output, scale, is_static=False)
+            else:
+                # Static scaling
+                assert (
+                    scale.numel() == 1
+                ), f"Expected scalar scale, got numel={scale.numel()}"
+                sgl_per_tensor_quant_fp8(input, output, scale, is_static=True)
         return output, scale
 
 else:
@@ -1436,34 +1455,59 @@ else:
         num_token_padding: Optional[int] = None,
         use_per_token_if_dynamic: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-
         assert input.ndim == 2, f"Expected 2D input tensor, got {input.ndim}D"
         shape = input.shape
         if num_token_padding:
             shape = (max(num_token_padding, input.shape[0]), shape[1])
         output = torch.empty(shape, device=input.device, dtype=fp8_dtype)
 
-        if scale is None:
-            # Dynamic scaling
-            if use_per_token_if_dynamic:
-                scale = torch.empty(
-                    (shape[0], 1), device=input.device, dtype=torch.float32
-                )
-                sgl_per_token_quant_fp8(input, output, scale)
-            else:
-                scale = torch.zeros(1, device=input.device, dtype=torch.float32)
-                sgl_per_tensor_quant_fp8(
-                    input, output, scale, is_static=False
-                )  # False for dynamic
-        else:
-            # Static scaling
-            assert (
-                scale.numel() == 1
-            ), f"Expected scalar scale, got numel={scale.numel()}"
-            sgl_per_tensor_quant_fp8(
-                input, output, scale, is_static=True
-            )  # True for static
+        if _is_hip:
 
+            if scale is None:
+                # Dynamic scaling
+                if use_per_token_if_dynamic:
+                    scale = torch.empty(
+                        (shape[0], 1), device=input.device, dtype=torch.float32
+                    )
+                    if _use_aiter:
+                        dynamic_per_token_scaled_quant(output, input, scale)
+                    else:
+                        torch.ops._C.dynamic_per_token_scaled_fp8_quant(
+                            output, input.contiguous(), scale, None
+                        )
+                else:
+                    scale = torch.zeros(1, device=input.device, dtype=torch.float32)
+                    if _use_aiter:
+                        dynamic_per_tensor_quant(output, input, scale)
+                    else:
+                        torch.ops._C.dynamic_scaled_fp8_quant(output, input, scale)
+            else:
+                # Static scaling
+                assert (
+                    scale.numel() == 1
+                ), f"Expected scalar scale, got numel={scale.numel()}"
+                if _use_aiter:
+                    static_per_tensor_quant(output, input, scale)
+                else:
+                    torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+        else:
+
+            if scale is None:
+                # Dynamic scaling
+                if use_per_token_if_dynamic:
+                    scale = torch.empty(
+                        (shape[0], 1), device=input.device, dtype=torch.float32
+                    )
+                    sgl_per_token_quant_fp8(input, output, scale)
+                else:
+                    scale = torch.zeros(1, device=input.device, dtype=torch.float32)
+                    sgl_per_tensor_quant_fp8(input, output, scale, is_static=False)
+            else:
+                # Static scaling
+                assert (
+                    scale.numel() == 1
+                ), f"Expected scalar scale, got numel={scale.numel()}"
+                sgl_per_tensor_quant_fp8(input, output, scale, is_static=True)
         return output, scale
 
 
