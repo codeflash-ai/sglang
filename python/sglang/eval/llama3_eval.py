@@ -78,10 +78,19 @@ TASK_TO_EVAL_SET = {
 
 class CustomAsyncHTTPXClient(httpx.AsyncClient):
     async def send(self, request: httpx.Request, *args, **kwargs) -> httpx.Response:
-        request.url = httpx.URL(
-            f"https://model-{os.getenv('MODEL_ID')}.api.baseten.co/development/predict"
-        )
+        # Set URL using cached value
+        request.url = self._predict_url
         return await super().send(request, *args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        # Cache environment variable and URL for efficiency
+        model_id = os.getenv('MODEL_ID')
+        self._predict_url = httpx.URL(
+            f"https://model-{model_id}.api.baseten.co/development/predict"
+        )
+        # Increase connection pool for potentially high concurrency
+        if 'limits' not in kwargs:
+            kwargs['limits'] = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        super().__init__(*args, **kwargs)
 
 
 def get_client(provider):
