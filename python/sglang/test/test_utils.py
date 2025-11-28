@@ -25,6 +25,7 @@ import aiohttp
 import numpy as np
 import requests
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from PIL import Image
 
@@ -39,6 +40,8 @@ from sglang.srt.utils import (
 )
 from sglang.test.run_eval import run_eval
 from sglang.utils import get_exception_traceback
+from sglang.lang.backend.openai import OpenAI
+from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
 
 # General test models
 DEFAULT_MODEL_NAME_FOR_TEST = "meta-llama/Llama-3.1-8B-Instruct"
@@ -416,17 +419,18 @@ def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
 
 
 def select_sglang_backend(args: argparse.Namespace):
-    from sglang.lang.backend.openai import OpenAI
-    from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
+    # Avoid repeating backend string lookups by storing
+    backend_value = args.backend
 
-    if args.backend.startswith("srt"):
-        if args.backend == "srt-no-parallel":
+    if backend_value.startswith("srt"):
+        if backend_value == "srt-no-parallel":
             global_config.enable_parallel_encoding = False
+        # Concatenate host and port directly, avoiding f-string overhead in tight loop
         backend = RuntimeEndpoint(f"{args.host}:{args.port}")
-    elif args.backend.startswith("gpt-"):
-        backend = OpenAI(args.backend)
+    elif backend_value.startswith("gpt-"):
+        backend = OpenAI(backend_value)
     else:
-        raise ValueError(f"Invalid backend: {args.backend}")
+        raise ValueError(f"Invalid backend: {backend_value}")
     return backend
 
 
