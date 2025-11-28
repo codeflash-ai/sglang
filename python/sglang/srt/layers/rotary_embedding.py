@@ -693,17 +693,39 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         )
 
     def _compute_inv_freq(self, rescale_factors: List[float]) -> torch.Tensor:
-        rescale_factors = torch.tensor(rescale_factors, dtype=torch.float32)
-        inv_freq = 1.0 / (
-            rescale_factors
-            * (
-                self.base
-                ** (
-                    torch.arange(0, self.rotary_dim, 2, dtype=torch.float)
-                    / self.rotary_dim
-                )
-            )
-        )
+        # Avoid redundant allocation of range tensor for every call by caching arange
+        rotary_dim = self.rotary_dim
+        device = None
+        # If called inside torch.no_grad(), can try to move to proper device via C-contiguous
+        # But default (None) lets torch.tensor broadcast to input factors
+        # Avoid constructing torch.arange on every call for the same rotary_dim
+        # Try to infer device from rescale_factors if it's a torch.Tensor
+        if isinstance(rescale_factors, torch.Tensor):
+            device = rescale_factors.device
+            factors_tensor = rescale_factors if rescale_factors.dtype == torch.float32 else rescale_factors.to(dtype=torch.float32)
+        else:
+            # Use frombuffer and memoryview for faster float list to tensor conversion
+            try:
+                import numpy as np
+
+                # Only attempt bulk conversion if float/double type
+                factors_np = np.asarray(rescale_factors, dtype=np.float32)
+                factors_tensor = torch.from_numpy(factors_np)
+            except ImportError:
+                # Fallback if numpy not present
+                factors_tensor = torch.tensor(rescale_factors, dtype=torch.float32)
+            except Exception:
+                factors_tensor = torch.tensor(rescale_factors, dtype=torch.float32)
+        # Static cache for arange to avoid reconstructing every call
+        if not hasattr(self, "_rotary_arange") or self._rotary_arange_num != rotary_dim:
+            self._rotary_arange = torch.arange(0, rotary_dim, 2, dtype=torch.float, device=device)
+            self._rotary_arange_num = rotary_dim
+        arange = self._rotary_arange
+        if device is not None and arange.device != device:
+            arange = arange.to(device=device)
+        power = arange / rotary_dim
+        # base to the power of (arange / dim), then factors_tensor multiplies via broadcasting
+        inv_freq = 1.0 / (factors_tensor * (self.base ** power))
         return inv_freq
 
     def _compute_cos_sin_cache(
