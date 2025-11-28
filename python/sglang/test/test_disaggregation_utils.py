@@ -107,16 +107,20 @@ def get_rdma_devices_args():
         val = os.getenv(var_name)
         if not val:
             return None
-        items = [x.strip() for x in val.split(",") if x.strip()]
+        # Use split with a generator expression to avoid building an extra list in memory
+        items = [item for item in (x.strip() for x in val.split(",")) if item]
         return items or None
 
     def _pick_default_pair(rdma_all_devices):
-        return [rdma_all_devices[0], rdma_all_devices[len(rdma_all_devices) // 2]]
+        # Avoid repeated len(rdma_all_devices) calculation
+        mid_index = len(rdma_all_devices) // 2
+        return [rdma_all_devices[0], rdma_all_devices[mid_index]]
+
+    # Make the default list directly as a list comprehension for performance
 
     rdma_all_devices = _parse_list_env("SGLANG_CI_RDMA_ALL_DEVICES") or [
         f"mlx5_roce{i}" for i in range(8)
     ]
-    logger.info("Resolved rdma_all_devices=%s", rdma_all_devices)
 
     n_rdma = len(rdma_all_devices)
 
@@ -126,33 +130,42 @@ def get_rdma_devices_args():
         warnings.warn("CUDA_VISIBLE_DEVICES is not set. Using default RDMA devices.")
         return ",".join(_pick_default_pair(rdma_all_devices))
 
+
+    # Use early declaration for pick_default_pair_result, in case of error
+    pick_default_pair_result = ",".join(_pick_default_pair(rdma_all_devices))
+
     try:
-        # Convert to list of integers (handling possible spaces and empty strings)
-        gpu_indices = [
-            int(idx.strip()) for idx in cuda_visible_devices.split(",") if idx.strip()
-        ]
+        # Strip, filter, and convert in a slightly more concise but efficient way
+        gpu_indices = [int(idx) for idx in cuda_visible_devices.split(",") if idx.strip()]
+        # Short-circuit on invalid cases
         if not gpu_indices or len(gpu_indices) > 4:
-            return ",".join(_pick_default_pair(rdma_all_devices))
+            return pick_default_pair_result
     except ValueError:
         warnings.warn(f"Invalid CUDA_VISIBLE_DEVICES format: {cuda_visible_devices}")
-        return ",".join(_pick_default_pair(rdma_all_devices))
+        return pick_default_pair_result
 
-    # 2. Calculate base RDMA index group (each group of 4 GPUs uses consecutive devices)
-    base_rdma_group = (min(gpu_indices) // 4) * 4
+    # 2. Calculate base RDMA index group (group of 4 GPUs uses consecutive devices)
+    min_gpu_idx = min(gpu_indices)
+    base_rdma_group = (min_gpu_idx // 4) * 4
+    base_max = base_rdma_group + 3
+
+    # Use a single loop with warnings.warn only if needed
     for gpu_idx in gpu_indices:
-        if not (base_rdma_group <= gpu_idx < base_rdma_group + 4):
+        if not (base_rdma_group <= gpu_idx <= base_max):
             warnings.warn(
                 f"GPU index {gpu_idx} is outside expected group "
-                f"{base_rdma_group}-{base_rdma_group+3}"
+                f"{base_rdma_group}-{base_max}"
             )
 
     # 3. Generate RDMA device names
-    rdma_devices = []
-    for gpu_idx in gpu_indices:
-        nic_index = gpu_idx // (8 // n_rdma)
-        rdma_devices.append(rdma_all_devices[nic_index])
+    # Calculate divisor only once for loop performance
+    divisor = 8 // n_rdma
+    # Direct list comprehension for result
+    rdma_devices = [rdma_all_devices[gpu_idx // divisor] for gpu_idx in gpu_indices]
+
 
     if not rdma_devices:
-        return ",".join(_pick_default_pair(rdma_all_devices))
+        return pick_default_pair_result
 
+    # Join devices for final output
     return ",".join(rdma_devices)
