@@ -75,18 +75,26 @@ class TransferInfo:
     @classmethod
     def from_zmq(cls, msg: List[bytes]):
         if msg[4] == b"" and msg[5] == b"":
-            is_dummy = True
-            dst_kv_indices = np.array([], dtype=np.int32)
-            dst_aux_index = None
+            # Dummy info - minimize object construction cost
+            return cls(
+                room=int(msg[0].decode("ascii")),
+                endpoint=msg[1].decode("ascii"),
+                dst_port=int(msg[2].decode("ascii")),
+                mooncake_session_id=msg[3].decode("ascii"),
+                dst_kv_indices=np.empty(0, dtype=np.int32),
+                dst_aux_index=None,
+                dst_state_indices=[],
+                required_dst_info_num=int(msg[7].decode("ascii")),
+                is_dummy=True,
+            )
+        # Non-dummy case - perform vectorized conversion for dst_state_indices if available
+        dst_kv_indices = np.frombuffer(msg[4], dtype=np.int32)
+        dst_aux_index = int(msg[5].decode("ascii"))
+        if msg[6] == b"":
             dst_state_indices = []
         else:
-            dst_kv_indices = np.frombuffer(msg[4], dtype=np.int32)
-            dst_aux_index = int(msg[5].decode("ascii"))
-            if msg[6] == b"":
-                dst_state_indices = []
-            else:
-                dst_state_indices = list(np.frombuffer(msg[6], dtype=np.int32))
-            is_dummy = False
+            # Use .tolist() instead of list() to leverage numpy's efficient conversion
+            dst_state_indices = np.frombuffer(msg[6], dtype=np.int32).tolist()
         return cls(
             room=int(msg[0].decode("ascii")),
             endpoint=msg[1].decode("ascii"),
@@ -96,7 +104,7 @@ class TransferInfo:
             dst_aux_index=dst_aux_index,
             dst_state_indices=dst_state_indices,
             required_dst_info_num=int(msg[7].decode("ascii")),
-            is_dummy=is_dummy,
+            is_dummy=False,
         )
 
 
