@@ -109,15 +109,13 @@ class CompilerInterface:
 def get_inductor_factors() -> list[Any]:
     factors: list[Any] = []
     # summarize system state
-    from torch._inductor.codecache import CacheBase
+    from torch._inductor import codecache
 
-    system_factors = CacheBase.get_system()
+    system_factors = codecache.CacheBase.get_system()
     factors.append(system_factors)
 
     # summarize pytorch state
-    from torch._inductor.codecache import torch_key
-
-    torch_factors = torch_key()
+    torch_factors = codecache.torch_key()
     factors.append(torch_factors)
     return factors
 
