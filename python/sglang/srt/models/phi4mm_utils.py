@@ -19,6 +19,16 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+_relu_instance = nn.ReLU(inplace=True)
+
+_gelu_instance = nn.GELU()
+
+_sigmoid_instance = torch.nn.Sigmoid()
+
+_identity_instance = nn.Identity()
+
+_swish_instance = None
+
 
 class BlockBase(nn.Module):
     """Block abstract module"""
@@ -38,16 +48,19 @@ def get_activation(name="relu"):
             one of ["relu", "gelu", "swish", "sigmoid"],
             default "relu".
     """
+    global _swish_instance
     name = name.lower()
     if name == "relu":
-        return nn.ReLU(inplace=True)
+        return _relu_instance
     if name == "gelu":
-        return nn.GELU()
+        return _gelu_instance
     if name == "swish":
-        return Swish()
+        if _swish_instance is None:
+            _swish_instance = Swish()
+        return _swish_instance
     if name == "sigmoid":
-        return torch.nn.Sigmoid()
-    return nn.Identity()
+        return _sigmoid_instance
+    return _identity_instance
 
 
 def adaptive_enc_mask(x_len, chunk_start_idx, left_window=0, right_window=0):
