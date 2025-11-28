@@ -5,16 +5,13 @@
 # This backward pass is faster for dimensions up to 8k, but after that it's much slower due to register spilling.
 # The models we train have hidden dim up to 8k anyway (e.g. Llama 70B), so this is fine.
 
+import math
 
 import torch
 import torch.nn.functional as F
 import triton
 import triton.language as tl
 from einops import rearrange
-
-from sglang.srt.utils import device_context, is_npu
-
-_is_npu = is_npu()
 
 
 def rms_norm_ref(
@@ -161,7 +158,7 @@ def _layer_norm_fwd(
     # heuristics for number of warps
     num_warps = min(max(BLOCK_N // 256, 1), 8)
     grid = (M, ngroups)
-    with device_context(x.device):
+    with torch.get_device_module(x.device).device(x.device.index):
         _layer_norm_fwd_1pass_kernel[grid](
             x,
             out,
@@ -184,10 +181,6 @@ def _layer_norm_fwd(
     return out, mean, rstd
 
 
-if _is_npu:
-    from sgl_kernel_npu.fla.layernorm_gated import layer_norm_fwd_npu as _layer_norm_fwd
-
-
 def rms_norm_gated(
     *,
     x,
@@ -203,17 +196,24 @@ def rms_norm_gated(
 
     x_shape_og = x.shape
     # reshape input data into 2D tensor
-    x = x.reshape(-1, x.shape[-1])
+    if x.ndim != 2:
+        x = x.reshape(-1, x.shape[-1])
     if x.stride(-1) != 1:
         x = x.contiguous()
+    
     if z is not None:
         assert z.shape == x_shape_og
-        z = z.reshape(-1, z.shape[-1])
+        if z.ndim != 2:
+            z = z.reshape(-1, z.shape[-1])
         if z.stride(-1) != 1:
             z = z.contiguous()
-    weight = weight.contiguous()
+    
+    if weight.stride(-1) != 1:
+        weight = weight.contiguous()
     if bias is not None:
-        bias = bias.contiguous()
+        if bias.stride(-1) != 1:
+            bias = bias.contiguous()
+    
     y, mean, rstd = _layer_norm_fwd(
         x,
         weight,
