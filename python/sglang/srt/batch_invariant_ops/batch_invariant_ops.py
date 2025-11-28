@@ -169,22 +169,25 @@ def _matmul_persistent_triton(
     assert (
         bias is None or bias.dim() == 1
     ), "Currently assuming bias is 1D, let Horace know if you run into this"
-    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    # Optimize: cache device in a local variable; NUM_SMS only depends on 'a.device'.
+    device = a.device
+    NUM_SMS = torch.cuda.get_device_properties(device).multi_processor_count
+
     M, K = a.shape
     K, N = b.shape
     dtype = a.dtype
     # Allocates output.
-    c = torch.empty((M, N), device=a.device, dtype=dtype)
+    c = torch.empty((M, N), device=device, dtype=dtype)
 
     # 1D launch kernel where each block gets its own program.
     def grid(META):
-        return (
-            min(
-                NUM_SMS,
-                triton.cdiv(M, META["BLOCK_SIZE_M"])
-                * triton.cdiv(N, META["BLOCK_SIZE_N"]),
-            ),
-        )
+        # Avoid recomputing triton.cdiv(N, ...) twice.
+        block_m = META["BLOCK_SIZE_M"]
+        block_n = META["BLOCK_SIZE_N"]
+        num_m = triton.cdiv(M, block_m)
+        num_n = triton.cdiv(N, block_n)
+        return (min(NUM_SMS, num_m * num_n),)
 
     configs = {
         torch.bfloat16: {
@@ -213,6 +216,7 @@ def _matmul_persistent_triton(
         },
     }
     # print(a.device, b.device, c.device)
+    conf = configs[dtype]
     matmul_kernel_persistent[grid](
         a,
         b,
@@ -232,7 +236,7 @@ def _matmul_persistent_triton(
         B_LARGE=b.numel() > 2**31,
         C_LARGE=c.numel() > 2**31,
         HAS_BIAS=bias is not None,
-        **configs[dtype],
+        **conf,
     )
     return c
 
