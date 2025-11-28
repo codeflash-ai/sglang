@@ -1007,12 +1007,12 @@ class OpenAIServingChat(OpenAIServingBase):
             The total number of tool calls in the history, or 0 if not applicable.
         """
         messages = getattr(request, "messages", [])
-        idx = 0
-        for msg in messages:
-            if msg.role == "assistant":
-                tool_calls = getattr(msg, "tool_calls", None)
-                idx += len(list(tool_calls)) if tool_calls is not None else 0  # noqa
-        return idx
+        # Use generator expression and sum for slightly better performance and memory efficiency
+        return sum(
+            len(msg.tool_calls)
+            for msg in messages
+            if msg.role == "assistant" and getattr(msg, "tool_calls", None) is not None
+        )
 
     def _get_enable_thinking_from_request(self, request: ChatCompletionRequest) -> bool:
         """Extracts the 'enable_thinking' flag from request chat_template_kwargs.
