@@ -72,7 +72,7 @@ class LRUEvictionPolicy(EvictionPolicy):
             return BASE_MODEL_UID
 
         # Iterate through access_order (oldest first) to find LRU victim
-        for uid in list(self.access_order.keys()):
+        for uid in self.access_order:
             if uid in candidates:
                 logger.debug(f"Selected LoRA {uid} for eviction (LRU)")
                 self.eviction_count += 1
