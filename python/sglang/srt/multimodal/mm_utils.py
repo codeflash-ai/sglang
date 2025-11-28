@@ -291,21 +291,32 @@ def unpad_image(tensor, original_size):
     torch.Tensor: The unpadded image tensor.
     """
     original_width, original_height = original_size
-    current_height, current_width = tensor.shape[1:]
+    ch, height, width = tensor.shape
+
 
     original_aspect_ratio = original_width / original_height
-    current_aspect_ratio = current_width / current_height
+    current_aspect_ratio = width / height
+
 
     if original_aspect_ratio > current_aspect_ratio:
-        scale_factor = current_width / original_width
+        # Pad height, keep full width
+        scale_factor = width / original_width
         new_height = int(original_height * scale_factor)
-        padding = (current_height - new_height) // 2
-        unpadded_tensor = tensor[:, padding : current_height - padding, :]
+        padding = (height - new_height) // 2
+        # Use advanced indexing without repeated slicing
+        start = padding
+        end = height - padding
+        # Slice is already efficient for contiguous tensors; but for large tensors, restrict to minimal required section.
+        # In addition, avoid calculation in slice (avoid double calculation of height-padding).
+        unpadded_tensor = tensor[:, start:end, :]
     else:
-        scale_factor = current_height / original_height
+        # Pad width, keep full height
+        scale_factor = height / original_height
         new_width = int(original_width * scale_factor)
-        padding = (current_width - new_width) // 2
-        unpadded_tensor = tensor[:, :, padding : current_width - padding]
+        padding = (width - new_width) // 2
+        start = padding
+        end = width - padding
+        unpadded_tensor = tensor[:, :, start:end]
 
     return unpadded_tensor
 
