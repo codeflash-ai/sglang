@@ -87,8 +87,8 @@ class GreedyTokenSelection(ChoicesSamplingMethod):
     def _build_logprob_matrix(self, input_token_logprobs, max_tokens, num_options):
         logprob_matrix = np.zeros((num_options, max_tokens))
         for i, option in enumerate(input_token_logprobs):
-            actual_logprobs = [token[0] for token in option]
-            avg_logprob = np.mean(actual_logprobs)
+            actual_logprobs = np.fromiter((token[0] for token in option), dtype=float, count=len(option))
+            avg_logprob = actual_logprobs.mean()
             logprob_matrix[i, : len(option)] = actual_logprobs
             if len(option) < max_tokens:
                 logprob_matrix[i, len(option) :] = avg_logprob
