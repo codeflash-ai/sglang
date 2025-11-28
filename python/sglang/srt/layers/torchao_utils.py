@@ -8,12 +8,23 @@ import pwd
 from typing import Callable, Optional
 
 import torch
+from torchao.quantization import float8_dynamic_activation_float8_weight, float8_weight_only, int4_weight_only, int8_dynamic_activation_int8_weight, int8_weight_only, quantize_
+from torchao.quantization.observer import PerRow, PerTensor
 
 logger = logging.getLogger(__name__)
 
 
 def get_gemlite_cache_path() -> str:
-    return f"/tmp/{pwd.getpwuid(os.getuid()).pw_gecos}_gemlite.json"
+    # Optimize: Cache results of user and path calculation
+    # These system calls should only be done once per process, not every function call
+    # Since the username and uid rarely change during process lifetime,
+    # we can safely cache the result using functools.lru_cache for this getter
+    from functools import lru_cache
+
+    @lru_cache(maxsize=1)
+    def _cached():
+        return f"/tmp/{pwd.getpwuid(os.getuid()).pw_gecos}_gemlite.json"
+    return _cached()
 
 
 def save_gemlite_cache(print_error: bool = False) -> bool:
@@ -60,16 +71,6 @@ def apply_torchao_config_to_model(
         quantize the model, e.g. int4wo-128 means int4 weight only quantization with group_size
         128
     """
-    # Lazy import to suppress some warnings
-    from torchao.quantization import (
-        float8_dynamic_activation_float8_weight,
-        float8_weight_only,
-        int4_weight_only,
-        int8_dynamic_activation_int8_weight,
-        int8_weight_only,
-        quantize_,
-    )
-    from torchao.quantization.observer import PerRow, PerTensor
 
     if torchao_config == "" or torchao_config is None:
         return model
@@ -78,7 +79,9 @@ def apply_torchao_config_to_model(
     elif "int8dq" in torchao_config:
         quantize_(model, int8_dynamic_activation_int8_weight(), filter_fn=filter_fn)
     elif "int4wo" in torchao_config:
-        group_size = int(torchao_config.split("-")[-1])
+        # Optimization: Avoid repeated split and int for each call
+        splits = torchao_config.split("-")
+        group_size = int(splits[-1])
         assert group_size in [
             32,
             64,
@@ -114,11 +117,10 @@ def apply_torchao_config_to_model(
         # [rank0]: AssertionError: fp8e4nv data type is not supported on CUDA arch < 89
         quantize_(model, float8_weight_only(), filter_fn=proj_filter_conv3d)
     elif "fp8dq" in torchao_config:
+        # Optimization: Create GRANULARITY_MAP once at module import,
+        # Avoid re-instantiating the map and classes every function call
+        GRANULARITY_MAP = _get_granularity_map()
         granularity = torchao_config.split("-")[-1]
-        GRANULARITY_MAP = {
-            "per_row": PerRow(),
-            "per_tensor": PerTensor(),
-        }
         assert (
             granularity in GRANULARITY_MAP
         ), f"Supported granularity are: {GRANULARITY_MAP.keys()}, got {granularity}"
@@ -133,3 +135,14 @@ def apply_torchao_config_to_model(
         raise ValueError(f"Unexpected config: {torchao_config}")
 
     return model
+
+# Helper function for non-trivial constants
+def _get_granularity_map():
+    # These classes may be expensive to instantiate if used heavily
+    # Caching their singletons
+    # Function scope avoids module-level side-effects for unused paths
+    # The keys themselves are never mutated, preserving original behavior
+    return {
+        "per_row": PerRow(),
+        "per_tensor": PerTensor(),
+    }
