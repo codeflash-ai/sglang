@@ -113,10 +113,9 @@ def _get_unique_name(name: str) -> str:
     _get_unique_name("tp") -> "tp:0"
     _get_unique_name("tp") -> "tp:1"
     """
-    if name not in _group_name_counter:
-        _group_name_counter[name] = 0
-    newname = f"{name}:{_group_name_counter[name]}"
-    _group_name_counter[name] += 1
+    count = _group_name_counter.setdefault(name, 0)
+    newname = f"{name}:{count}"
+    _group_name_counter[name] = count + 1
     return newname
 
 
@@ -1785,7 +1784,8 @@ def get_tensor_model_parallel_rank():
 
 def get_pipeline_model_parallel_world_size():
     """Return world size for the pipeline model parallel group."""
-    return get_pp_group().world_size
+    assert _PP is not None, "pipeline model parallel group is not initialized"
+    return _PP.world_size
 
 
 def get_pipeline_model_parallel_rank():
