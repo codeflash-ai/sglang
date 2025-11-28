@@ -139,8 +139,13 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         self.release_pages = torch.empty((0,), dtype=torch.int64, device=self.device)
 
     def available_size(self):
-        # To avoid minor "len(free_pages) * 1" overhead
-        return len(self.free_pages) + len(self.release_pages)
+        # Optimize len(torch.Tensor) usage by leveraging efficient .numel()
+        # (for 1D tensors, numel() == len(); for non-tensor, fallback to len())
+        # Because release_pages and free_pages are always 1D torch.Tensor,
+        # using .numel() avoids Python iteration and is slightly more efficient.
+        fp = self.free_pages
+        rp = self.release_pages
+        return fp.numel() + rp.numel()
 
     def alloc(self, need_size: int):
         if self.need_sort and need_size > len(self.free_pages):
