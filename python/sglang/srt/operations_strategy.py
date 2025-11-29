@@ -56,8 +56,11 @@ class OperationsStrategy:
 
 
 def _assert_all_same(items: List):
-    assert all(item == items[0] for item in items)
-    return items[0]
+    first = items[0]
+    for item in items:
+        if item != first:
+            assert False
+    return first
 
 
 # -------------------------------- Strategy for DeepSeek ---------------------------------------
