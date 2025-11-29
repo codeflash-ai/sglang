@@ -556,7 +556,9 @@ def _get_full_multimodal_text_prompt(
 
     # NOTE: For now we always add missing modality_token at the front of
     # the prompt. This may change to be customizable in the future.
-    return "\n".join([modality_token] * left + [text_prompt])
+    if left == 0:
+        return text_prompt
+    return (modality_token + "\n") * left + text_prompt
 
 
 def generate_chat_conv(
