@@ -67,28 +67,34 @@ def select_best_resolution(original_size, possible_resolutions):
         tuple: The best fit resolution in the format (width, height).
     """
     original_width, original_height = original_size
-    best_fit = None
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
+    best_fit = None
+
+    # Hoist invariant computation for orig_resolution
+    orig_resolution = original_width * original_height
+
+    # Use local variables and avoid attribute lookups in the loop
     for width, height in possible_resolutions:
         # Calculate the downscaled size to keep the aspect ratio
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
+        scale_w = width / original_width
+        scale_h = height / original_height
+        scale = scale_w if scale_w < scale_h else scale_h
+        downscaled_width = int(original_width * scale)
+        downscaled_height = int(original_height * scale)
 
         # Calculate effective and wasted resolutions
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        ds_resolution = downscaled_width * downscaled_height
+        effective_resolution = ds_resolution if ds_resolution < orig_resolution else orig_resolution
         wasted_resolution = (width * height) - effective_resolution
 
-        if effective_resolution > max_effective_resolution or (
-            effective_resolution == max_effective_resolution
-            and wasted_resolution < min_wasted_resolution
-        ):
+        # Faster comparison and update
+        if effective_resolution > max_effective_resolution:
             max_effective_resolution = effective_resolution
+            min_wasted_resolution = wasted_resolution
+            best_fit = (width, height)
+        elif effective_resolution == max_effective_resolution and wasted_resolution < min_wasted_resolution:
             min_wasted_resolution = wasted_resolution
             best_fit = (width, height)
 
@@ -174,16 +180,17 @@ def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
         ], "patch_size should be in [224, 336, 384, 448, 512]"
         # Use regex to extract the range from the input string
         matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
-        range_start = tuple(map(int, matches[0]))
-        range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
-        grid_pinpoints = [
-            (i, j)
-            for i in range(range_start[0], range_end[0] + 1)
-            for j in range(range_start[1], range_end[1] + 1)
-        ]
-        # Multiply all elements by patch_size
-        grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
+        range_start_0, range_start_1 = map(int, matches[0])
+        range_end_0, range_end_1 = map(int, matches[-1])
+
+        # Pre-allocate list for better performance
+        grid_pinpoints_list = []
+        append = grid_pinpoints_list.append
+        for i in range(range_start_0, range_end_0 + 1):
+            for j in range(range_start_1, range_end_1 + 1):
+                append([i * patch_size, j * patch_size])
+        grid_pinpoints = grid_pinpoints_list
+
     if type(grid_pinpoints) is list:
         possible_resolutions = grid_pinpoints
     else:
