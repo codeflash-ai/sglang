@@ -271,29 +271,40 @@ def get_linear_quant_method(
     linear_method_cls: type,
 ):
     from sglang.srt.layers.linear import LinearBase
-    from sglang.srt.layers.quantization.unquant import (
-        UnquantizedEmbeddingMethod,
-        UnquantizedLinearMethod,
-    )
-    from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
 
-    cloned_config = deepcopy(config)
-    parallel_lm_head_quantized = (
-        isinstance(layer, ParallelLMHead) and cloned_config.lm_head_quantized
-    )
+    # Check for ParallelLMHead and quantization
+    parallel_lm_head_quantized = False
+    # Only import when needed, and check attribute presence
+    if hasattr(config, "lm_head_quantized"):
+        # This import only if relevant for the check
+        from sglang.srt.layers.vocab_parallel_embedding import ParallelLMHead
+
+        parallel_lm_head_quantized = (
+            isinstance(layer, ParallelLMHead) and config.lm_head_quantized
+        )
 
     if isinstance(layer, LinearBase) or parallel_lm_head_quantized:
         # False = skip module, None = no override, else = Positive match
-        if get_dynamic_override(cloned_config, layer_name=prefix) is False:
+        if get_dynamic_override(config, layer_name=prefix) is False:
+            # Only import if relevant (very rare branch)
             if parallel_lm_head_quantized:
+                from sglang.srt.layers.quantization.unquant import (
+                    UnquantizedEmbeddingMethod,
+                )
+
                 return UnquantizedEmbeddingMethod()
+            from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
+
             return UnquantizedLinearMethod()
 
         if prefix:
             # Dynamic per module/layer rules may override base config
+            cloned_config = _shallow_config_clone(config)
             override_config(cloned_config, prefix=prefix)
+            return linear_method_cls(cloned_config)
+        else:
+            return linear_method_cls(config)
 
-        return linear_method_cls(cloned_config)
     return None
 
 
@@ -561,3 +572,12 @@ def sort_weights(q_w: torch.Tensor, g_idx: torch.Tensor):
         g_idx.to(device=orig_device),
         sort_indices.to(device=orig_device),
     )
+
+
+def _shallow_config_clone(config: QuantizationConfig):
+    # Only copy fields that may be overridden
+    cls = type(config)
+    new_cfg = cls.__new__(cls)
+    new_cfg.__dict__ = config.__dict__.copy()
+    # If QuantizationConfig subclasses add mutable attributes, ensure these are correctly copied here.
+    return new_cfg
