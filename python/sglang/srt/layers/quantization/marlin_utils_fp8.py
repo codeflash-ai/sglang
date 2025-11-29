@@ -33,8 +33,7 @@ def fp8_fused_exponent_bias_into_scales(scales):
     # exponent_bias_fp16 = 2 ** 4 - 2 ** 3 = 8
     # exponent_bias_bf16 = 2 ** 7 - 2 ** 3 = 120
     exponent_bias = 2 ** (target_exponent - 1) - 2 ** (fp8_exponent - 1)
-    s = torch.ones_like(scales) * 2
-    s = s**exponent_bias
+    s = torch.tensor(2.0, dtype=scales.dtype, device=scales.device) ** exponent_bias
     return scales * s
 
 
