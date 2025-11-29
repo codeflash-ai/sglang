@@ -89,7 +89,10 @@ def topk_ids_logical_to_physical(
 def _topk_ids_logical_to_physical_static(
     topk_ids: torch.Tensor, info: Optional[ExpertLocationDispatchInfo]
 ) -> torch.Tensor:
-    return info.partial_logical_to_rank_dispatch_physical_map[topk_ids]
+    tensor_map = info.partial_logical_to_rank_dispatch_physical_map
+    if topk_ids.device == tensor_map.device and topk_ids.dtype == torch.long:
+        return torch.take(tensor_map, topk_ids)
+    return tensor_map[topk_ids]
 
 
 def _topk_ids_logical_to_physical_dynamic(
