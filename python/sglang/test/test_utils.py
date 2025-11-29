@@ -25,6 +25,7 @@ import aiohttp
 import numpy as np
 import requests
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from PIL import Image
 
@@ -341,7 +342,17 @@ def call_select_vllm(context, choices, url=None):
 
 def call_select_guidance(context, choices, model=None):
     assert model is not None
-    from guidance import select
+    # Move import to module level to avoid repeated import overhead
+    # Guidance's select is assumed to have no per-call side effects for imports
+    try:
+        select = call_select_guidance._select
+    except AttributeError:
+        from guidance import select
+        call_select_guidance._select = select
+    else:
+        # select is already loaded at function level
+        pass
+
 
     out = model + context + select(choices, name="answer")
     return choices.index(out["answer"])
