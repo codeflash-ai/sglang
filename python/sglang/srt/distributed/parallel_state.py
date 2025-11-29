@@ -113,10 +113,9 @@ def _get_unique_name(name: str) -> str:
     _get_unique_name("tp") -> "tp:0"
     _get_unique_name("tp") -> "tp:1"
     """
-    if name not in _group_name_counter:
-        _group_name_counter[name] = 0
-    newname = f"{name}:{_group_name_counter[name]}"
-    _group_name_counter[name] += 1
+    count = _group_name_counter.setdefault(name, 0)
+    newname = f"{name}:{count}"
+    _group_name_counter[name] = count + 1
     return newname
 
 
@@ -1433,6 +1432,7 @@ _PP: Optional[GroupCoordinator] = None
 
 
 def get_pp_group() -> GroupCoordinator:
+    # The assert is necessary for the initialization contract.
     assert _PP is not None, "pipeline model parallel group is not initialized"
     return _PP
 
@@ -1790,7 +1790,10 @@ def get_pipeline_model_parallel_world_size():
 
 def get_pipeline_model_parallel_rank():
     """Return my rank for the pipeline model parallel group."""
-    return get_pp_group().rank_in_group
+    # Save reference to _PP to avoid function call overhead.
+    pp_group = _PP
+    assert pp_group is not None, "pipeline model parallel group is not initialized"
+    return pp_group.rank_in_group
 
 
 def get_moe_expert_parallel_world_size():
