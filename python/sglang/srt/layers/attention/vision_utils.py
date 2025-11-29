@@ -33,31 +33,37 @@ def pad_vit_attn_dummy_heads(config, name: str, loaded_weight: torch.Tensor):
     if "attn.qkv_proj" in name:
         wq, wk, wv = loaded_weight.chunk(3, dim=0)
         if name.endswith(".weight"):
-            dummy_shape = [num_dummy_heads, head_dim, wq.shape[-1]]
+            dummy_shape = (num_dummy_heads, head_dim, wq.shape[-1])
         elif name.endswith(".bias"):
-            dummy_shape = [num_dummy_heads, head_dim]
+            dummy_shape = (num_dummy_heads, head_dim)
         else:
             raise RuntimeError(f"Unsupported weight with name={name}")
-        pad_func = lambda x: torch.cat(
-            [x.unflatten(0, (-1, head_dim)), x.new_zeros(dummy_shape)], dim=0
-        ).flatten(0, 1)
-        wq, wk, wv = pad_func(wq), pad_func(wk), pad_func(wv)
+
+        # Avoid unnecessary flatten/unflatten by constructing the full tensor then .reshape
+        n_heads = wq.shape[0] // head_dim
+        out_shape = (n_heads + num_dummy_heads, head_dim) if len(dummy_shape) == 2 else (n_heads + num_dummy_heads, head_dim, wq.shape[-1])
+        zeros = wq.new_zeros(dummy_shape)
+        # Concatenate without using flatten/unflatten; more direct and efficient
+        wq = torch.cat([wq.view(n_heads, head_dim, *wq.shape[1:]), zeros], dim=0).reshape(-1, *wq.shape[1:])
+        wk = torch.cat([wk.view(n_heads, head_dim, *wk.shape[1:]), zeros], dim=0).reshape(-1, *wk.shape[1:])
+        wv = torch.cat([wv.view(n_heads, head_dim, *wv.shape[1:]), zeros], dim=0).reshape(-1, *wv.shape[1:])
         loaded_weight = torch.cat([wq, wk, wv], dim=0)
-    elif any([_ in name for _ in ["attn.q_proj", "attn.k_proj", "attn.v_proj"]]):
+    elif "attn.q_proj" in name or "attn.k_proj" in name or "attn.v_proj" in name:
+        # Replaced any([...]) with fast boolean check and tuple
         if name.endswith(".weight"):
-            dummy_shape = [num_dummy_heads, head_dim, loaded_weight.shape[-1]]
+            dummy_shape = (num_dummy_heads, head_dim, loaded_weight.shape[-1])
         elif name.endswith(".bias"):
-            dummy_shape = [num_dummy_heads, head_dim]
+            dummy_shape = (num_dummy_heads, head_dim)
         else:
             raise RuntimeError(f"Unsupported weight with name={name}")
-        padded_weight = loaded_weight.new_zeros(dummy_shape)
-        loaded_weight = torch.cat(
-            [loaded_weight.unflatten(0, (-1, head_dim)), padded_weight], dim=0
-        ).flatten(0, 1)
+        n_heads = loaded_weight.shape[0] // head_dim
+        zeros = loaded_weight.new_zeros(dummy_shape)
+        loaded_weight = torch.cat([
+            loaded_weight.view(n_heads, head_dim, *loaded_weight.shape[1:]),
+            zeros
+        ], dim=0).reshape(-1, *loaded_weight.shape[1:])
     elif "attn.proj.weight" in name:
-        padded_weight = loaded_weight.new_zeros(
-            loaded_weight.shape[0], head_dim * num_dummy_heads
-        )
+        padded_weight = loaded_weight.new_zeros(loaded_weight.shape[0], head_dim * num_dummy_heads)
         loaded_weight = torch.cat([loaded_weight, padded_weight], dim=-1)
     elif "attn.q_norm.weight" in name or "attn.k_norm.weight" in name:
         padded_weight = loaded_weight.new_zeros(head_dim * num_dummy_heads)
