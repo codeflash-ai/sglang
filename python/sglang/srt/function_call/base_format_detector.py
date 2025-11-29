@@ -111,7 +111,11 @@ class BaseFormatDetector(ABC):
         For some format, the bot_token is not a token in model's vocabulary, such as
         `[TOOL_CALLS] [` in Mistral.
         """
-        for i in range(1, min(len(buffer) + 1, len(bot_token))):
+        buffer_len = len(buffer)
+        bot_token_len = len(bot_token)
+        max_len = min(buffer_len + 1, bot_token_len)
+        for i in range(1, max_len):
+            # Slice once per iteration; avoids repeated attribute lookups
             if bot_token.startswith(buffer[-i:]):
                 return i
         return 0
