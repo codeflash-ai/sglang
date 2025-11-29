@@ -1,4 +1,3 @@
-import copy
 import os
 from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -355,21 +354,10 @@ class InternVLChatConfig(PretrainedConfig):
         Returns:
             `Dict[str, any]`: Dictionary of all the attributes that make up this configuration instance,
         """
-        output = copy.deepcopy(self.__dict__)
+        output = {k: v for k, v in self.__dict__.items() if k not in ("vision_config", "llm_config")}
         output["vision_config"] = self.vision_config.to_dict()
         output["llm_config"] = self.llm_config.to_dict()
         output["model_type"] = self.__class__.model_type
-        output["use_backbone_lora"] = self.use_backbone_lora
-        output["use_llm_lora"] = self.use_llm_lora
-        output["select_layer"] = self.select_layer
-        output["force_image_size"] = self.force_image_size
-        output["downsample_ratio"] = self.downsample_ratio
-        output["template"] = self.template
-        output["dynamic_image_size"] = self.dynamic_image_size
-        output["use_thumbnail"] = self.use_thumbnail
-        output["ps_version"] = self.ps_version
-        output["min_dynamic_patch"] = self.min_dynamic_patch
-        output["max_dynamic_patch"] = self.max_dynamic_patch
 
         return output
 
