@@ -1,7 +1,5 @@
 # Adapted from https://raw.githubusercontent.com/vllm-project/vllm/v0.5.5/vllm/model_executor/layers/quantization/base_config.py
 from __future__ import annotations
-
-import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 
@@ -236,7 +234,7 @@ def method_has_implemented_embedding(method_class: Type[QuantizeMethodBase]) -> 
     it exists for our given method. We check this by making sure the function
     has been changed from the base implementation.
     """
-    base_embedding = inspect.getattr_static(QuantizeMethodBase, "embedding", None)
-    class_embedding = inspect.getattr_static(method_class, "embedding", None)
+    base_embedding = getattr(QuantizeMethodBase, "embedding", None)
+    class_embedding = getattr(method_class, "embedding", None)
 
     return class_embedding is not None and class_embedding is not base_embedding
