@@ -23,6 +23,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import flatten_nested_list, is_npu, print_warning_once
 from sglang.utils import logger
+from itertools import repeat
 
 _is_npu = is_npu()
 
@@ -219,25 +220,33 @@ class MultiModalityDataPaddingPatternTokenPairs(MultiModalityDataPaddingPattern)
         last_idx = 0
         data_idx = -1
 
-        start_indices = [i for i, x in enumerate(input_ids) if x in start_token_ids]
-        end_indices = [i for i, x in enumerate(input_ids) if x in end_tokens_ids]
+        # Efficient single-pass for locating start and end indices
+        start_indices = []
+        end_indices = []
+        for i, x in enumerate(input_ids):
+            if x in start_token_ids:
+                start_indices.append(i)
+            if x in end_tokens_ids:
+                end_indices.append(i)
 
         if len(start_indices) != len(end_indices):
             return input_ids
 
+        data_start_token_ids_set = set(self.data_start_token_ids)
+
         for start_idx, end_idx in zip(start_indices, end_indices):
             padded_ids.extend(input_ids[last_idx : start_idx + 1])
 
-            if input_ids[start_idx] in self.data_start_token_ids:
+            if input_ids[start_idx] in data_start_token_ids_set:
                 data_idx += 1
-                mm_inputs.data_offsets += [start_idx]
+                mm_inputs.data_offsets.append(start_idx)
 
             if data_idx >= len(pad_values):
                 data_idx = len(pad_values) - 1
 
             num_tokens = end_idx - start_idx - 1
             pad_value = pad_values[data_idx]
-            padded_ids.extend([pad_value] * num_tokens)
+            padded_ids.extend(repeat(pad_value, num_tokens))
 
             last_idx = end_idx
 
