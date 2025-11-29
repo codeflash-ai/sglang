@@ -261,7 +261,7 @@ def format_multichoice_question(row):
 
 
 def check_equality(sampler: SamplerBase, expr1: str, expr2: str):
-    prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
+    prompt = EQUALITY_TEMPLATE.format(expression1=expr1, expression2=expr2)
     response = sampler([dict(content=prompt, role="user")])
     return (response or "").lower().strip() == "yes"
 
