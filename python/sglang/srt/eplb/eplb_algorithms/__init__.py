@@ -76,5 +76,4 @@ def compute_algorithm(
     # TODO test on real scenarios and know which ones perform better
     if (num_groups is not None) and (num_groups % num_nodes == 0):
         return EplbAlgorithm.deepseek_hierarchical
-    else:
-        return EplbAlgorithm.deepseek
+    return EplbAlgorithm.deepseek
