@@ -109,30 +109,34 @@ def _compute_moe_deepseek_blog_prefill(layer):
 
 
 def _compute_moe_deepseek_blog_decode(layer):
+    yield_op = operations.YieldOperation()
+    sa = layer.self_attn
+    mlp = layer.mlp
+    ops = [
+        layer.op_comm_prepare_attn,
+        sa.op_prepare,
+        yield_op,
+        sa.op_core,
+        layer.op_comm_prepare_mlp,
+        mlp.op_gate,
+        mlp.op_select_experts,
+        yield_op,
+        mlp.op_dispatch_a,
+        mlp.op_shared_experts,
+        yield_op,
+        mlp.op_dispatch_b,
+        mlp.op_experts,
+        mlp.op_combine_a,
+        yield_op,
+        mlp.op_combine_b,
+        yield_op,
+        mlp.op_output,
+        layer.op_comm_postprocess_layer,
+    ]
     return OperationsStrategy(
         deep_gemm_num_sms=None,
         tbo_delta_stages=2,
-        operations=[
-            layer.op_comm_prepare_attn,
-            layer.self_attn.op_prepare,
-            operations.YieldOperation(),
-            layer.self_attn.op_core,
-            layer.op_comm_prepare_mlp,
-            layer.mlp.op_gate,
-            layer.mlp.op_select_experts,
-            operations.YieldOperation(),
-            layer.mlp.op_dispatch_a,
-            layer.mlp.op_shared_experts,
-            operations.YieldOperation(),
-            layer.mlp.op_dispatch_b,
-            layer.mlp.op_experts,
-            layer.mlp.op_combine_a,
-            operations.YieldOperation(),
-            layer.mlp.op_combine_b,
-            operations.YieldOperation(),
-            layer.mlp.op_output,
-            layer.op_comm_postprocess_layer,
-        ],
+        operations=ops,
     )
 
 
