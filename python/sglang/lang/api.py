@@ -19,6 +19,8 @@ from sglang.lang.ir import (
     SglVideo,
 )
 
+_REGEX_CACHE = {}
+
 
 def function(
     func: Optional[Callable] = None, num_api_spec_tokens: Optional[int] = None
@@ -107,14 +109,12 @@ def gen(
             token_length_normalized if choices_method is None else choices_method,
         )
 
-    # check regex is valid
+    # check regex is valid using a cache for faster repeated validations
     if regex is not None:
-        try:
-            re.compile(regex)
-        except re.error as e:
-            raise e
+        _validate_regex(regex)
 
-    return SglGen(
+    # Prepare arguments as a tuple to minimize attribute lookup in SglGen call
+    args = (
         name,
         max_tokens,
         min_tokens,
@@ -137,6 +137,7 @@ def gen(
         regex,
         json_schema,
     )
+    return SglGen(*args)
 
 
 def gen_int(
@@ -290,3 +291,13 @@ def separate_reasoning(
     expr: Optional[SglExpr] = None, model_type: Optional[str] = None
 ):
     return SglExprList([expr, SglSeparateReasoning(model_type, expr=expr)])
+
+def _validate_regex(pattern: str) -> None:
+    # Use the cache to avoid recompiling the same pattern multiple times
+    pat = _REGEX_CACHE.get(pattern)
+    if pat is not None:
+        return
+    try:
+        _REGEX_CACHE[pattern] = re.compile(pattern)
+    except re.error as e:
+        raise e
