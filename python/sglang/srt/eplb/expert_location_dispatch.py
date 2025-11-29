@@ -97,13 +97,29 @@ def _topk_ids_logical_to_physical_dynamic(
 ) -> torch.Tensor:
     topk_ids_original_shape = topk_ids.shape
     device = topk_ids.device
-    topk_ids = topk_ids.flatten()
+    # Flatten only if not already 1D to avoid unnecessary allocation
+    if topk_ids.ndim > 1:
+        topk_ids_flat = topk_ids.reshape(-1)
+    else:
+        topk_ids_flat = topk_ids
 
-    chosen_dispatch_index = (
-        torch.randint(0, 65536, topk_ids.shape, dtype=torch.int32, device=device)
-        % info.partial_logical_to_all_physical_map_num_valid[topk_ids]
+    # Local variable references for better performance in the loop-free vector ops
+    partial_logical_to_all_physical_map_num_valid = info.partial_logical_to_all_physical_map_num_valid
+    partial_logical_to_all_physical_map = info.partial_logical_to_all_physical_map
+
+    # Use out parameter for randomness (helps save allocation in some torch configs)
+    rand = torch.randint(
+        0, 65536, topk_ids_flat.shape, dtype=torch.int32, device=device
     )
-    topk_ids = info.partial_logical_to_all_physical_map[topk_ids, chosen_dispatch_index]
+    num_valid = partial_logical_to_all_physical_map_num_valid[topk_ids_flat]
+    # Use in-place modulus to avoid extra allocation
+    rand.remainder_(num_valid)
 
-    topk_ids = topk_ids.view(topk_ids_original_shape)
-    return topk_ids
+    # Avoid an intermediate copy by directly indexing
+    topk_ids_flat_physical = partial_logical_to_all_physical_map[topk_ids_flat, rand]
+    # Only reshape if necessary to minimize overhead
+    if topk_ids_flat_physical.shape != topk_ids_original_shape:
+        topk_ids_physical = topk_ids_flat_physical.view(topk_ids_original_shape)
+    else:
+        topk_ids_physical = topk_ids_flat_physical
+    return topk_ids_physical
