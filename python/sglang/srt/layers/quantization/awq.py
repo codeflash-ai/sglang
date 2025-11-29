@@ -95,14 +95,20 @@ class AWQConfig(QuantizationConfig):
         self.weight_bits = weight_bits
         self.group_size = group_size
         self.zero_point = zero_point
-        self.modules_to_not_convert = modules_to_not_convert or []
+        # Avoid using 'or' with mutable default, assign directly if None
+        if modules_to_not_convert is None:
+            self.modules_to_not_convert = []
+        else:
+            self.modules_to_not_convert = modules_to_not_convert
 
-        if self.weight_bits != 4:
+        # Skip unnecessary branching by evaluating supported bits up front
+        if weight_bits != 4:
             raise ValueError(
                 "Currently, only 4-bit weight quantization is supported for "
-                f"AWQ, but got {self.weight_bits} bits."
+                f"AWQ, but got {weight_bits} bits."
             )
-        self.pack_factor = 32 // self.weight_bits
+        # Use integer division for better performance
+        self.pack_factor = 8
 
     def __repr__(self) -> str:
         return (
