@@ -86,7 +86,11 @@ class Softcap:
             return self.forward_native(x)
 
     def forward_native(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.tanh(x.float() / self.softcap_const) * self.softcap_const
+        if self.softcap_const == 1.0:
+            return torch.tanh(x.float())
+        if x.dtype != torch.float32:
+            x = x.float()
+        return torch.tanh(x / self.softcap_const) * self.softcap_const
 
     def forward_cuda(self, x: torch.Tensor, autotune=False) -> torch.Tensor:
         return fused_softcap(x, self.softcap_const, autotune=autotune)
