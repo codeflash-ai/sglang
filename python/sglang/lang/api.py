@@ -246,8 +246,7 @@ def select(
 def _role_common(name: str, expr: Optional[SglExpr] = None):
     if expr is None:
         return SglExprList([SglRoleBegin(name), SglRoleEnd(name)])
-    else:
-        return SglExprList([SglRoleBegin(name), expr, SglRoleEnd(name)])
+    return SglExprList([SglRoleBegin(name), expr, SglRoleEnd(name)])
 
 
 def system(expr: Optional[SglExpr] = None):
