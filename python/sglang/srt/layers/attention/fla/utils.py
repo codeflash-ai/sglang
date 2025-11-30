@@ -63,8 +63,12 @@ def get_abs_err(x, y):
 
 
 def get_err_ratio(x, y):
-    err = (x.detach() - y.detach()).flatten().square().mean().sqrt().item()
-    base = (x.detach()).flatten().square().mean().sqrt().item()
+    # Detach once at the top to avoid redundant detach and flatten
+    x_detach_flat = x.detach().flatten()
+    y_detach_flat = y.detach().flatten()
+    diff = x_detach_flat - y_detach_flat
+    err = diff.square().mean().sqrt().item()
+    base = x_detach_flat.square().mean().sqrt().item()
     return err / (base + 1e-8)
 
 
