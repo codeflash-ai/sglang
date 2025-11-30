@@ -104,10 +104,7 @@ class MoeWNA16Config(QuantizationConfig):
         else:
             raise ValueError("moe_wna16 only support gptq and awq.")
 
-        if modules_to_not_convert is None:
-            self.modules_to_not_convert = []
-        else:
-            self.modules_to_not_convert = modules_to_not_convert
+        self.modules_to_not_convert = modules_to_not_convert or []
 
     @classmethod
     def get_name(cls) -> str:
