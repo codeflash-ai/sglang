@@ -201,13 +201,15 @@ class AWQMarlinConfig(QuantizationConfig):
         if self.weight_bits not in self.TYPE_MAP:
             raise ValueError(
                 f"Unsupported num_bits = {self.weight_bits}. "
-                f"Supported num_bits = {self.TYPE_MAP.keys()}"
+                f"Supported num_bits = {list(self.TYPE_MAP.keys())}"
             )
 
-        self.quant_type = self.TYPE_MAP[self.weight_bits]
+        quant_type = self.TYPE_MAP[self.weight_bits]
+        self.quant_type = quant_type
+
 
         verify_marlin_supported(
-            self.quant_type, group_size=self.group_size, has_zp=self.zero_point
+            quant_type, group_size=self.group_size, has_zp=self.zero_point
         )
 
     def __repr__(self) -> str:
