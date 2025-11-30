@@ -46,9 +46,19 @@ def transdata(nd_mat, block_size: tuple = (16, 16)):
 
 
 def trans_rope_weight(weight, rope_dim):
-    weight_1 = weight[..., -rope_dim::2, :].contiguous()
-    weight_2 = weight[..., -rope_dim + 1 :: 2, :].contiguous()
-    weight[..., -rope_dim:, :] = torch.cat([weight_1, weight_2], dim=-2)
+    # Combine advanced indexing and avoid double contiguous calls
+    # Preallocate slices, and cat directly to assignment slice w/o interim .contiguous() for each
+    rope_start = -rope_dim
+
+    weight_1 = weight[..., rope_start::2, :]
+    weight_2 = weight[..., rope_start + 1::2, :]
+
+    # .contiguous() only after assignment (if needed for output), not for intermediate slices
+    # Reuse the output storage of assignment in-place rather than allocating a new tensor
+
+    # torch.cat allocates a new tensor, which must be assigned in-place. 
+    # Use in-place assignment for the specific sub-slice.
+    weight[..., rope_start:, :] = torch.cat((weight_1, weight_2), dim=-2)
 
     return weight.contiguous()
 
