@@ -92,7 +92,13 @@ class OffloaderV1(BaseOffloader):
         submodule_accessor: Optional[_SubmoduleAccessor] = None,
         whitelist_param_names_creator: Optional[_WhitelistParamNamesCreator] = None,
     ):
-        return [self.maybe_offload_to_cpu(module) for module in all_modules_generator]
+        # Convert generator to list once, avoid repeated generator traversal
+        modules = list(all_modules_generator)
+        # Precompute pin_memory once, not per module
+        pin_memory = is_pin_memory_available()
+        # Avoid repeated attribute lookups by localizing
+        maybe_offload = self.maybe_offload_to_cpu
+        return [maybe_offload(module, pin_memory) for module in modules]
 
     def maybe_offload_to_cpu(self, module: torch.nn.Module) -> torch.nn.Module:
         if (params := next(module.parameters(), None)) is None:
