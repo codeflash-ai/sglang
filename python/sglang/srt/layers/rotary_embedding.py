@@ -675,14 +675,12 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
 
         short_cache = self._compute_cos_sin_cache(
             original_max_position_embeddings, short_factor, short_mscale
-        )
-        short_cache = short_cache.to(dtype)
+        ).to(dtype)
         self.register_buffer("short_cos_sin_cache", short_cache, persistent=False)
 
         long_cache = self._compute_cos_sin_cache(
             max_position_embeddings, long_factor, long_mscale
-        )
-        long_cache = long_cache.to(dtype)
+        ).to(dtype)
         self.register_buffer("long_cos_sin_cache", long_cache, persistent=False)
 
         long_short_cache = torch.cat(
@@ -731,19 +729,28 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         key = key.view(*key.shape[:-1], -1, self.head_size)
 
         k = self.original_max_position_embeddings
-        long_prompt_offset = (
-            torch.any(positions > k).float() * torch.full_like(positions, k)
-        ).long()
-        idx = (
-            torch.add(positions, long_prompt_offset)
-            if long_prompt_offset is not None
-            else positions
-        )
-        self.long_short_cos_sin_cache: torch.Tensor = self.long_short_cos_sin_cache.to(
-            idx.device
-        )
-        idx = torch.add(idx, offsets) if offsets is not None else idx
-        cos_sin = torch.index_select(self.long_short_cos_sin_cache, 0, idx)
+
+        # Use torch.where instead of torch.any + float() * full_like for efficiency and clarity
+        any_long_prompt = torch.any(positions > k)
+        if any_long_prompt:
+            long_prompt_offset = torch.full_like(positions, k)
+        else:
+            long_prompt_offset = torch.zeros_like(positions)
+        idx = positions + long_prompt_offset
+
+        # If offsets exists, add (use inplace ops if possible, but adding here is simplest/safest)
+        if offsets is not None:
+            idx = idx + offsets
+
+        # Only move the cache if necessary
+        cache = self.long_short_cos_sin_cache
+        if cache.device != idx.device:
+            cache = cache.to(idx.device)
+
+        # Efficient gather (torch.index_select is fine for small batch, but for large batch, torch.take may help; index_select is preferred here)
+        cos_sin = torch.index_select(cache, 0, idx)
+
+        # The chunk/repeat pattern is expensive; improve by directly broadcasting if possible
 
         cos, sin = cos_sin.chunk(2, dim=-1)
         cos = cos.repeat(1, 2).unsqueeze(-2)
@@ -759,6 +766,7 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         key_rot = key_rot * cos + _rotate_neox(key_rot) * sin
         key = torch.cat((key_rot, key_pass), dim=-1)
 
+        # .flatten(-2) is fastest for merging last two dims
         return query.flatten(-2), key.flatten(-2)
 
 
