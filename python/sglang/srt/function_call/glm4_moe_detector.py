@@ -12,13 +12,19 @@ logger = logging.getLogger(__name__)
 
 
 def get_argument_type(func_name: str, arg_key: str, defined_tools: list):
-    name2tool = {tool.function.name: tool for tool in defined_tools}
-    if func_name not in name2tool:
+    # Avoid building the name2tool dict on every call.
+    # Instead, perform a single scan for func_name.
+    tool = None
+    for tool_candidate in defined_tools:
+        if tool_candidate.function.name == func_name:
+            tool = tool_candidate
+            break
+    if tool is None:
         return None
-    tool = name2tool[func_name]
-    if arg_key not in tool.function.parameters["properties"]:
+    properties = tool.function.parameters["properties"]
+    if arg_key not in properties:
         return None
-    return tool.function.parameters["properties"][arg_key].get("type", None)
+    return properties[arg_key].get("type", None)
 
 
 def parse_arguments(json_value):
