@@ -138,16 +138,21 @@ def _annotate_region(debug_name):
 
 class _StateDict:
     def __init__(self):
-        self._data = {}
+        # Use object.__setattr__ to skip __setattr__ override, avoiding the (key == "_data") check on construction
+        object.__setattr__(self, "_data", {})
 
     def __setattr__(self, key, value):
         if key == "_data":
-            super().__setattr__(key, value)
+            # Use object.__setattr__ instead of super().__setattr__, which is slightly faster for new-style classes
+            object.__setattr__(self, key, value)
             return
+        data = (
+            self._data
+        )  # Local variable access is slightly faster than repeated attribute lookup
         assert (
-            key not in self._data
+            key not in data
         ), f"`{key}` already exist, are you sure you want to override it?"
-        self._data[key] = value
+        data[key] = value
 
     def __getattr__(self, item):
         return self._data[item]
@@ -175,12 +180,7 @@ class _StateDict:
 
 
 def _convert_operations_to_stages(operations: List[Operation]) -> List[Stage]:
-    operations = _decorate_operations(operations)
-    operation_chunks = list(
-        _chunk_by_separator(operations, lambda op: isinstance(op, YieldOperation))
-    )
-    assert all(len(chunk) > 0 for chunk in operation_chunks)
-    return operation_chunks
+    return _chunked_and_decorated_operations(operations)
 
 
 def _chunk_by_separator(
@@ -209,3 +209,22 @@ def _decorate_operation(operation: Operation, debug_name_prefix: str):
         + getattr(operation, "__name__", "unknown").replace("op_", ""),
         fn=operation,
     )
+
+
+def _chunked_and_decorated_operations(
+    operations: List[Operation], debug_name_prefix: str = ""
+) -> List[Stage]:
+    operation_chunks: List[Stage] = []
+    current_chunk: Stage = []
+
+    for op in operations:
+        if isinstance(op, YieldOperation):
+            if current_chunk:
+                operation_chunks.append(current_chunk)
+                current_chunk = []
+        else:
+            current_chunk.append(_decorate_operation(op, debug_name_prefix))
+    if current_chunk:
+        operation_chunks.append(current_chunk)
+    assert all(len(chunk) > 0 for chunk in operation_chunks)
+    return operation_chunks
