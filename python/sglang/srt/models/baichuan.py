@@ -51,23 +51,25 @@ from sglang.srt.utils import add_prefix
 
 def _get_alibi_slopes(total_num_heads: int) -> torch.Tensor:
     closest_power_of_2 = 2 ** math.floor(math.log2(total_num_heads))
-    base = torch.tensor(
-        2 ** (-(2 ** -(math.log2(closest_power_of_2) - 3))),
-        dtype=torch.float32,
-    )
-    powers = torch.arange(1, 1 + closest_power_of_2, dtype=torch.int32)
+    log2_cp2 = math.log2(closest_power_of_2)
+    # Precompute fixed exponents and bases up front (avoid redundant log2)
+    base_value = 2 ** (-(2 ** -(log2_cp2 - 3)))
+    base = torch.tensor(base_value, dtype=torch.float32)
+    # torch.arange preferred dtype for floats, compute all at once
+    powers = torch.arange(1, 1 + closest_power_of_2, dtype=torch.float32)
     slopes = torch.pow(base, powers)
 
     if closest_power_of_2 != total_num_heads:
-        extra_base = torch.tensor(
-            2 ** (-(2 ** -(math.log2(2 * closest_power_of_2) - 3))),
-            dtype=torch.float32,
-        )
+        # Avoid recomputing log2 and exp twice
+        log2_cp2_x2 = math.log2(2 * closest_power_of_2)
+        extra_base_value = 2 ** (-(2 ** -(log2_cp2_x2 - 3)))
+        extra_base = torch.tensor(extra_base_value, dtype=torch.float32)
         num_remaining_heads = min(
             closest_power_of_2, total_num_heads - closest_power_of_2
         )
+        # Use float32 arange for consistency and efficiency
         extra_powers = torch.arange(
-            start=1, end=1 + 2 * num_remaining_heads, step=2, dtype=torch.int32
+            1, 1 + 2 * num_remaining_heads, 2, dtype=torch.float32
         )
         slopes = torch.cat([slopes, torch.pow(extra_base, extra_powers)], dim=0)
     return slopes
