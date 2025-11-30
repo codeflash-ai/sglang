@@ -2287,24 +2287,45 @@ class MRotaryEmbedding(RotaryEmbedding):
     def _get_llm_pos_ids_for_vision(
         st_idx, vision_idx, spatial_merge_size, t_index, grid_hs, grid_ws, device
     ):
+        # Extract sizes
         grid_h = grid_hs[vision_idx] // spatial_merge_size
         grid_w = grid_ws[vision_idx] // spatial_merge_size
+        t_len = t_index.shape[0] if hasattr(t_index, "shape") else len(t_index)
 
-        h_index = (
-            torch.arange(grid_h, device=device)
-            .view(1, -1, 1)
-            .expand(len(t_index), -1, grid_w)
-            .flatten()
-        )
-        w_index = (
-            torch.arange(grid_w, device=device)
-            .view(1, 1, -1)
-            .expand(len(t_index), grid_h, -1)
-            .flatten()
-        )
-        t_index = t_index.view(-1, 1).expand(-1, grid_h * grid_w).flatten()
+        # Preallocate output tensor and fill slices to avoid expensive stacking and flattening
+        num_pos = t_len * grid_h * grid_w
+        # Allocate output tensor (3, num_pos), matching dtype/device with t_index
+        llm_pos_ids = torch.empty((3, num_pos), device=device, dtype=t_index.dtype)
 
-        llm_pos_ids = torch.stack([t_index, h_index, w_index], dim=0) + st_idx
+        # t_index (temporal): [t_len] -> broadcast to [num_pos]
+        t_broadcast = t_index.reshape(-1, 1).expand(-1, grid_h * grid_w).reshape(-1)
+        llm_pos_ids[0] = t_broadcast
+
+        # h_index: torch.arange(grid_h) -> expand + flatten to [num_pos]
+        h = torch.arange(grid_h, device=device)
+        # Broadcast h over t_len*grid_w, flatten result
+        h_broadcast = (
+            h
+            .reshape(1, -1, 1)
+            .expand(t_len, grid_h, grid_w)
+            .reshape(-1)
+        )
+        llm_pos_ids[1] = h_broadcast
+
+        # w_index: torch.arange(grid_w) -> expand + flatten to [num_pos]
+        w = torch.arange(grid_w, device=device)
+        # Broadcast w over t_len*grid_h, flatten
+        w_broadcast = (
+            w
+            .reshape(1, 1, -1)
+            .expand(t_len, grid_h, grid_w)
+            .reshape(-1)
+        )
+        llm_pos_ids[2] = w_broadcast
+
+        # Add st_idx, in-place for memory efficiency
+        llm_pos_ids += st_idx
+
         return llm_pos_ids
 
 
