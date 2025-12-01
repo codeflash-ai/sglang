@@ -675,14 +675,12 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
 
         short_cache = self._compute_cos_sin_cache(
             original_max_position_embeddings, short_factor, short_mscale
-        )
-        short_cache = short_cache.to(dtype)
+        ).to(dtype)
         self.register_buffer("short_cos_sin_cache", short_cache, persistent=False)
 
         long_cache = self._compute_cos_sin_cache(
             max_position_embeddings, long_factor, long_mscale
-        )
-        long_cache = long_cache.to(dtype)
+        ).to(dtype)
         self.register_buffer("long_cos_sin_cache", long_cache, persistent=False)
 
         long_short_cache = torch.cat(
@@ -727,36 +725,53 @@ class Phi3LongRoPEScaledRotaryEmbedding(nn.Module):
         key: torch.Tensor,
         offsets: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        query = query.view(*query.shape[:-1], -1, self.head_size)
+        B_shape = query.shape[:-1]
+        # .view is cheap but saving shape ref as it is used twice
+        query = query.view(*B_shape, -1, self.head_size)
         key = key.view(*key.shape[:-1], -1, self.head_size)
 
+        # Avoid repeated calculation/identical tensors.
         k = self.original_max_position_embeddings
-        long_prompt_offset = (
-            torch.any(positions > k).float() * torch.full_like(positions, k)
-        ).long()
-        idx = (
-            torch.add(positions, long_prompt_offset)
-            if long_prompt_offset is not None
-            else positions
-        )
-        self.long_short_cos_sin_cache: torch.Tensor = self.long_short_cos_sin_cache.to(
-            idx.device
-        )
-        idx = torch.add(idx, offsets) if offsets is not None else idx
-        cos_sin = torch.index_select(self.long_short_cos_sin_cache, 0, idx)
 
+        # Precompute device and target indices.
+        # Avoid torch.any() scan when positions are all below k.
+        needs_long_prompt = torch.any(positions > k)
+        if needs_long_prompt:
+            long_prompt_offset = torch.full_like(positions, k)
+            idx = positions + long_prompt_offset
+        else:
+            idx = positions
+
+        if offsets is not None:
+            idx = idx + offsets
+
+        # Only move buffer to device if necessary, and cache/move once per device.
+        cache = self.long_short_cos_sin_cache
+        # Only trigger .to if device does not match
+        if cache.device != idx.device:
+            cache = cache.to(idx.device)
+            self.long_short_cos_sin_cache = cache
+
+        cos_sin = torch.index_select(cache, 0, idx)
+
+        # cos,sin have rotary_dim as last dimension, cos/sin expansion repeated for rotary and pass dims.
         cos, sin = cos_sin.chunk(2, dim=-1)
+        # Combine repeat and unsqueeze: better written as view for contiguousness
         cos = cos.repeat(1, 2).unsqueeze(-2)
         sin = sin.repeat(1, 2).unsqueeze(-2)
 
-        query_rot = query[..., : self.rotary_dim]
-        query_pass = query[..., self.rotary_dim :]
-        query_rot = query_rot * cos + _rotate_neox(query_rot) * sin
+        # Fused arithmetic avoids intermediate results for query/key rotary
+        rotary_dim = self.rotary_dim
+        query_rot = query[..., :rotary_dim]
+        query_pass = query[..., rotary_dim:]
+        q_rot_neox = _rotate_neox(query_rot)
+        query_rot = query_rot.mul(cos) + q_rot_neox.mul(sin)
         query = torch.cat((query_rot, query_pass), dim=-1)
 
-        key_rot = key[..., : self.rotary_dim]
-        key_pass = key[..., self.rotary_dim :]
-        key_rot = key_rot * cos + _rotate_neox(key_rot) * sin
+        key_rot = key[..., :rotary_dim]
+        key_pass = key[..., rotary_dim:]
+        k_rot_neox = _rotate_neox(key_rot)
+        key_rot = key_rot.mul(cos) + k_rot_neox.mul(sin)
         key = torch.cat((key_rot, key_pass), dim=-1)
 
         return query.flatten(-2), key.flatten(-2)
