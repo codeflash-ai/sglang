@@ -349,34 +349,41 @@ class CompressedTensorsConfig(QuantizationConfig):
             return False
 
         # Confirm weight scheme is supported.
-        is_symmetric_weight = weight_quant.symmetric
-        is_static_weight = not weight_quant.dynamic
-        is_per_tensor_or_channel_weight = weight_quant.strategy in [
-            QuantizationStrategy.TENSOR,
-            QuantizationStrategy.CHANNEL,
-        ]
-        if not (
-            is_symmetric_weight
-            and is_static_weight  # noqa: SIM103
-            and is_per_tensor_or_channel_weight
+        strategy = weight_quant.strategy
+        if (
+            weight_quant.symmetric
+            and not weight_quant.dynamic
+            and (
+                strategy is QuantizationStrategy.TENSOR
+                or strategy is QuantizationStrategy.CHANNEL
+            )
         ):
-            return False
+            return True
 
-        # All conditions satisfied.
-        return True
+        return False
 
     def _is_wNa16_group_channel(
         self, weight_quant: BaseModel, input_quant: BaseModel
     ) -> bool:
-        input_quant_none = input_quant is None
-        is_symmetric = weight_quant.symmetric
-        is_channel_group = (
-            weight_quant.strategy == QuantizationStrategy.CHANNEL.value
-            or weight_quant.strategy == QuantizationStrategy.GROUP.value
-        )
-        is_static = not weight_quant.dynamic
+        # Cache attribute and value lookups to local variables to speed up
+        # Avoid repeated lookups for strategies by caching both .value's
+        wq_strategy = weight_quant.strategy
+        channel_value = QuantizationStrategy.CHANNEL.value
+        group_value = QuantizationStrategy.GROUP.value
 
-        return is_channel_group and input_quant_none and is_symmetric and is_static
+        # Unroll condition for better short-circuiting
+        if not ((wq_strategy == channel_value) or (wq_strategy == group_value)):
+            return False
+
+        # Only check other conditions if the above condition is passed
+        if input_quant is not None:
+            return False
+        if not weight_quant.symmetric:
+            return False
+        if weight_quant.dynamic:
+            return False
+
+        return True
 
     def _get_scheme_from_parts(
         self, weight_quant: BaseModel, input_quant: BaseModel
