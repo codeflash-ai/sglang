@@ -287,8 +287,12 @@ class CompletionResponseChoice(BaseModel):
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
+        # Optimize by using a local variable for hidden_states for faster attribute access.
+        hidden_states = self.hidden_states
         data = handler(self)
-        if self.hidden_states is None:
+        if hidden_states is None:
+            # `data.pop("hidden_states", None)` is already efficient,
+            # but we want to avoid attribute lookup on self twice.
             data.pop("hidden_states", None)
         return data
 
