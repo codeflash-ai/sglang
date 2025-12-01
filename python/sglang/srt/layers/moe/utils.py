@@ -207,9 +207,12 @@ def get_deepep_config() -> str:
 
 def is_tbo_enabled() -> bool:
     global IS_TBO_ENABLED
-    if IS_TBO_ENABLED is None:
-        IS_TBO_ENABLED = False
-    return IS_TBO_ENABLED
+    # Inline the initialization to avoid checking IS_TBO_ENABLED every call
+    # (Assume IS_TBO_ENABLED is only ever set in this function as per context)
+    if IS_TBO_ENABLED is not None:
+        return IS_TBO_ENABLED
+    IS_TBO_ENABLED = False
+    return False
 
 
 def is_sbo_enabled() -> bool:
