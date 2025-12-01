@@ -528,12 +528,14 @@ def _yarn_find_correction_range(
     base: float = 10000,
     max_position_embeddings: int = 2048,
 ) -> Tuple[int, int]:
-    low = math.floor(
-        _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
-    )
-    high = math.ceil(
-        _yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
+    # Precompute logs used in both calls for better memory/cache efficiency
+    log_base = math.log(base)
+    # Precompute for low/high rotations
+    log_mp_low = math.log(max_position_embeddings / (low_rot * 2 * math.pi))
+    log_mp_high = math.log(max_position_embeddings / (high_rot * 2 * math.pi))
+
+    low = math.floor((dim * log_mp_low) / (2 * log_base))
+    high = math.ceil((dim * log_mp_high) / (2 * log_base))
     return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
