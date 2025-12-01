@@ -119,8 +119,12 @@ def resize_and_pad_image(image, target_resolution):
         new_height = target_height
         new_width = min(math.ceil(original_width * scale_h), target_width)
 
-    # Resize the image
-    resized_image = image.resize((new_width, new_height))
+    # Use PIL's high-performance resizing method with explicit resampling for better speed/quality balance
+    resized_image = image.resize((new_width, new_height), resample=Image.BILINEAR)
+
+    # Only create a new image if padding is necessary, otherwise return resized directly
+    if new_width == target_width and new_height == target_height:
+        return resized_image
 
     new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
     paste_x = (target_width - new_width) // 2
