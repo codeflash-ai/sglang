@@ -97,13 +97,24 @@ def _topk_ids_logical_to_physical_dynamic(
 ) -> torch.Tensor:
     topk_ids_original_shape = topk_ids.shape
     device = topk_ids.device
-    topk_ids = topk_ids.flatten()
+    # Avoid extra memory allocation by .flatten() if already contiguous and 1D
+    if topk_ids.dim() > 1:
+        topk_ids = topk_ids.reshape(-1)
+    # Cache topk_ids for use in indexing
+    topk_idx = topk_ids
 
-    chosen_dispatch_index = (
-        torch.randint(0, 65536, topk_ids.shape, dtype=torch.int32, device=device)
-        % info.partial_logical_to_all_physical_map_num_valid[topk_ids]
-    )
-    topk_ids = info.partial_logical_to_all_physical_map[topk_ids, chosen_dispatch_index]
+    # Generate chosen_dispatch_index more efficiently using torch.empty + random_
+    # Use torch.empty(...).random_(high), avoids constructing intermediate range
+    num_valid = info.partial_logical_to_all_physical_map_num_valid[topk_idx]
+    rand_idx = torch.empty_like(topk_idx, dtype=torch.int32, device=device)
+    # torch.randint is in fact already fast, but torch.empty.random_ may save a bit in large batches
+    rand_idx.random_(65536)
+    chosen_dispatch_index = rand_idx % num_valid
 
-    topk_ids = topk_ids.view(topk_ids_original_shape)
-    return topk_ids
+    # Use advanced indexing in one kernel call for mapping
+    topk_ids_physical = info.partial_logical_to_all_physical_map[topk_idx, chosen_dispatch_index]
+
+    # Avoid unnecessary view if shape did not change
+    if topk_ids_original_shape != topk_ids_physical.shape:
+        topk_ids_physical = topk_ids_physical.view(topk_ids_original_shape)
+    return topk_ids_physical
