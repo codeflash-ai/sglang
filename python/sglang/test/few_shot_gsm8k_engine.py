@@ -22,10 +22,8 @@ def get_one_example(lines, i, include_answer):
 
 
 def get_few_shot_examples(lines, k):
-    ret = ""
-    for i in range(k):
-        ret += get_one_example(lines, i, True) + "\n\n"
-    return ret
+    examples = [get_one_example(lines, i, True) for i in range(k)]
+    return "\n\n".join(examples) + "\n\n" if examples else ""
 
 
 def get_answer_value(answer_str):
