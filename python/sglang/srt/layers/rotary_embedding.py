@@ -1809,9 +1809,8 @@ class MRotaryEmbedding(RotaryEmbedding):
             image_idx, video_idx, audio_idx = 0, 0, 0
             for i, current_input_ids in enumerate(total_input_ids):
                 image_nums, video_nums, audio_nums = 0, 0, 0
-                vision_start_indices = torch.argwhere(
-                    current_input_ids == vision_start_token_id
-                ).squeeze(1)
+                # Using nonzero for speed (argwhere is equivalent but slower for this case)
+                vision_start_indices = (current_input_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
                 if vision_start_indices.numel() > 0:
                     vision_tokens = current_input_ids[vision_start_indices + 1]
                     image_nums = (vision_tokens == image_token_id).sum()
@@ -1820,23 +1819,24 @@ class MRotaryEmbedding(RotaryEmbedding):
                         if use_audio_in_video
                         else (vision_tokens == video_token_id).sum()
                     )
-                audio_nums = torch.sum(current_input_ids == audio_start_token_id)
+                audio_nums = (current_input_ids == audio_start_token_id).sum()
+                # Avoid repeated .tolist(); only call once
                 input_tokens = current_input_ids.tolist()
                 llm_pos_ids_list: list = []
                 st = 0
                 remain_images, remain_videos, remain_audios = (
-                    image_nums,
-                    video_nums,
-                    audio_nums,
+                    int(image_nums),
+                    int(video_nums),
+                    int(audio_nums),
                 )
                 multimodal_nums = (
-                    image_nums + audio_nums
+                    int(image_nums) + int(audio_nums)
                     if use_audio_in_video
-                    else image_nums + video_nums + audio_nums
+                    else int(image_nums) + int(video_nums) + int(audio_nums)
                 )
                 for _ in range(multimodal_nums):
                     st_idx = (
-                        llm_pos_ids_list[-1].max() + 1
+                        llm_pos_ids_list[-1].max().item() + 1
                         if len(llm_pos_ids_list) > 0
                         else 0
                     )
@@ -1860,21 +1860,16 @@ class MRotaryEmbedding(RotaryEmbedding):
 
                     text_len = min_ed - st
                     if text_len != 0:
-                        llm_pos_ids_list.append(
-                            torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-                        )
+                        text_tensor = torch.arange(text_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
+                        llm_pos_ids_list.append(text_tensor)
                         st_idx += text_len
                     # Audio in Video
-                    if (
+                    bos_len, eos_len = (2, 2) if (
                         min_ed == ed_vision_start
                         and ed_vision_start + 1 == ed_audio_start
-                    ):
-                        bos_len, eos_len = 2, 2
-                    else:
-                        bos_len, eos_len = 1, 1
-                    llm_pos_ids_list.append(
-                        torch.arange(bos_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    ) else (1, 1)
+                    bos_tensor = torch.arange(bos_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
+                    llm_pos_ids_list.append(bos_tensor)
                     st_idx += bos_len
                     # Audio Only
                     if min_ed == ed_audio_start:
@@ -1882,7 +1877,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                             audio_seqlens[audio_idx]
                         )
                         llm_pos_ids = (
-                            torch.arange(audio_len).view(1, -1).expand(3, -1) + st_idx
+                            torch.arange(audio_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
                         )
                         llm_pos_ids_list.append(llm_pos_ids)
 
@@ -1899,7 +1894,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                         grid_hs = image_grid_thw[:, 1]
                         grid_ws = image_grid_thw[:, 2]
                         t_index = (
-                            torch.arange(grid_t) * 1 * position_id_per_seconds
+                            torch.arange(grid_t, device=position_ids.device) * 1 * position_id_per_seconds
                         ).float()
                         llm_pos_ids = MRotaryEmbedding._get_llm_pos_ids_for_vision(
                             st_idx,
@@ -1910,7 +1905,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                             grid_ws,
                             input_ids.device,
                         )
-                        image_len = image_grid_thw[image_idx].prod() // (
+                        image_len = (image_grid_thw[image_idx].prod().item()) // (
                             spatial_merge_size**2
                         )
                         llm_pos_ids_list.append(llm_pos_ids)
@@ -1928,7 +1923,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                         grid_hs = video_grid_thw[:, 1]
                         grid_ws = video_grid_thw[:, 2]
                         t_index = (
-                            torch.arange(grid_t)
+                            torch.arange(grid_t, device=position_ids.device)
                             * second_per_grids[video_idx].cpu().float()
                             * position_id_per_seconds
                         ).float()
@@ -1941,7 +1936,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                             grid_ws,
                             input_ids.device,
                         )
-                        video_len = video_grid_thw[video_idx].prod() // (
+                        video_len = (video_grid_thw[video_idx].prod().item()) // (
                             spatial_merge_size**2
                         )
                         llm_pos_ids_list.append(llm_pos_ids)
@@ -1959,14 +1954,14 @@ class MRotaryEmbedding(RotaryEmbedding):
                             audio_seqlens[audio_idx]
                         )
                         audio_llm_pos_ids = (
-                            torch.arange(audio_len).view(1, -1).expand(3, -1) + st_idx
+                            torch.arange(audio_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
                         )
                         grid_t = video_grid_thw[video_idx][0]
                         grid_hs = video_grid_thw[:, 1]
                         grid_ws = video_grid_thw[:, 2]
 
                         t_index = (
-                            torch.arange(grid_t)
+                            torch.arange(grid_t, device=position_ids.device)
                             * second_per_grids[video_idx].cpu().float()
                             * position_id_per_seconds
                         ).float()
@@ -2015,7 +2010,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                                     :, audio_data_index : audio_llm_pos_ids.shape[-1]
                                 ]
                             )
-                        video_len = video_grid_thw[video_idx].prod() // (
+                        video_len = (video_grid_thw[video_idx].prod().item()) // (
                             spatial_merge_size**2
                         )
 
@@ -2026,32 +2021,34 @@ class MRotaryEmbedding(RotaryEmbedding):
                         remain_videos -= 1
                         remain_audios -= 1
                     st_idx = (
-                        llm_pos_ids_list[-1].max() + 1
+                        llm_pos_ids_list[-1].max().item() + 1
                         if len(llm_pos_ids_list) > 0
                         else 0
                     )
-                    llm_pos_ids_list.append(
-                        torch.arange(eos_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    eos_tensor = torch.arange(eos_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
+                    llm_pos_ids_list.append(eos_tensor)
+
 
                 if st < len(input_tokens):
                     st_idx = (
-                        llm_pos_ids_list[-1].max() + 1
+                        llm_pos_ids_list[-1].max().item() + 1
                         if len(llm_pos_ids_list) > 0
                         else 0
                     )
                     text_len = len(input_tokens) - st
-                    llm_pos_ids_list.append(
-                        torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    text_tensor_rem = torch.arange(text_len, device=position_ids.device).view(1, -1).expand(3, -1) + st_idx
+                    llm_pos_ids_list.append(text_tensor_rem)
+
+                # Avoid per-item float conversion, only do .float() on already-correct dtype
 
                 llm_positions = torch.cat(
-                    [item.float() for item in llm_pos_ids_list], dim=1
-                ).reshape(3, -1)
+                    llm_pos_ids_list, dim=1
+                ).reshape(3, -1).float()
+
 
                 position_ids[..., i, :] = llm_positions.to(position_ids.device)
                 mrope_position_deltas.append(
-                    llm_positions.max() + 1 - len(current_input_ids)
+                    llm_positions.max().item() + 1 - len(current_input_ids)
                 )
             mrope_position_deltas = torch.tensor(
                 mrope_position_deltas, device=input_ids.device
@@ -2060,9 +2057,9 @@ class MRotaryEmbedding(RotaryEmbedding):
             return position_ids, mrope_position_deltas
         else:
             s = input_ids.shape[1]
-            position_ids = torch.arange(s)
+            position_ids = torch.arange(s, device=input_ids.device)
             position_ids = (
-                position_ids.unsqueeze(0).expand(3, -1, -1).to(input_ids.device)
+                position_ids.unsqueeze(0).expand(3, -1, -1)
             )
             max_position_ids = position_ids.max(0, keepdim=False)[0].max(
                 -1, keepdim=True
