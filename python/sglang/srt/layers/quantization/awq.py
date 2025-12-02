@@ -75,7 +75,12 @@ ScalarType, scalar_types = get_scalar_types()
 
 
 def is_layer_skipped_awq(prefix: str, modules_to_not_convert: List[str]):
-    return any(module_name in prefix for module_name in modules_to_not_convert)
+    if not modules_to_not_convert:
+        return False
+    for module_name in modules_to_not_convert:
+        if module_name in prefix:
+            return True
+    return False
 
 
 class AWQConfig(QuantizationConfig):
