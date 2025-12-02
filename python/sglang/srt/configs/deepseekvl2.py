@@ -19,23 +19,37 @@ def select_best_resolution(image_size, candidate_resolutions):
     max_effective_resolution = 0
     min_wasted_resolution = float("inf")
 
+
+    orig_res = original_width * original_height
+
+    # Convert candidate_resolutions to tuple if input is not already a sequence type supporting multiple iterations
     for width, height in candidate_resolutions:
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(
-            original_height * scale
-        )
-        effective_resolution = min(
-            downscaled_width * downscaled_height, original_width * original_height
-        )
+        # Avoid float division where possible, and precalculate once per candidate
+        scale_w = width / original_width
+        scale_h = height / original_height
+        if scale_w < scale_h:
+            scale = scale_w
+            downscaled_width = width
+            downscaled_height = int(original_height * scale_w)
+        else:
+            scale = scale_h
+            downscaled_width = int(original_width * scale_h)
+            downscaled_height = height
+
+        effective_resolution = downscaled_width * downscaled_height
+        if effective_resolution > orig_res:
+            effective_resolution = orig_res  # min(effective_resolution, orig_res)
         wasted_resolution = (width * height) - effective_resolution
 
-        if effective_resolution > max_effective_resolution or (
-            effective_resolution == max_effective_resolution
-            and wasted_resolution < min_wasted_resolution
-        ):
+        # Short-circuit check for best candidate
+        if effective_resolution > max_effective_resolution:
             max_effective_resolution = effective_resolution
             min_wasted_resolution = wasted_resolution
             best_fit = (width, height)
+        elif effective_resolution == max_effective_resolution:
+            if wasted_resolution < min_wasted_resolution:
+                min_wasted_resolution = wasted_resolution
+                best_fit = (width, height)
 
     return best_fit
 
