@@ -72,8 +72,11 @@ class IntermediateTensors:
 
 
 def _normalize_dims(dims, ndim: int):
-    dims = [dims] if isinstance(dims, int) else list(dims)
-    return [d if d >= 0 else ndim + d for d in dims]
+    if isinstance(dims, int):
+        d = dims
+        return [d if d >= 0 else ndim + d]
+    # Avoid creating an unnecessary list if dims is already a tuple or list
+    return [(d if d >= 0 else ndim + d) for d in dims]
 
 
 class _MaybeIntermediateTensors:
